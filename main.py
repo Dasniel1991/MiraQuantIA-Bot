@@ -10,7 +10,6 @@ from google import genai
 # 1. PUXANDO APENAS A CHAVE DA BASE44 DO RAILWAY
 # ==========================================
 BASE44_API_KEY = os.environ.get("BASE44_API_KEY")
-# As chaves da Bybit foram removidas daqui, pois agora virão dinamicamente da sua tela de Configurações!
 
 # ==========================================
 # 2. CONFIGURAÇÃO DA IA E DA BASE44
@@ -34,7 +33,7 @@ def obter_configuracoes_painel():
         if response.status_code in [200, 201]:
             dados = response.json()
             if len(dados) > 0:
-                return dados[0] # Retorna a primeira configuração de usuário encontrada
+                return dados[0] 
         print(f"[Aviso] Nenhuma configuração encontrada no painel. Status: {response.status_code}")
         return None
     except Exception as e:
@@ -123,23 +122,24 @@ def iniciar_robo():
                 time.sleep(60)
                 continue
                 
-            # Verifica o botão de ligar/desligar (Kill Switch)
+            # --- LINHA DE RAIO-X ADICIONADA AQUI ---
+            print(f"\n[RAIO-X BASE44] Dados recebidos do banco: {config}")
+            # ---------------------------------------
+
             status_bot = config.get('status_bot', False)
             if status_bot == False or str(status_bot).lower() == 'false':
                 print(f"\n[{datetime.now().strftime('%H:%M:%S')}] 🛑 KILL SWITCH ATIVADO. Robô desligado no painel. Aguardando...")
                 time.sleep(60)
                 continue
 
-            # Pega as chaves e os parâmetros exatos que você digitou na tela
             chave_bybit = config.get('chave_api')
             secret_bybit = config.get('secret_api')
             
-            # Pega a meta de lucro e o risco de perda da tela, dividindo por 100 para cálculo (ex: 2% vira 0.02)
             meta_diaria = float(config.get('meta_diaria_porcentagem', 2)) / 100
             risco_maximo = float(config.get('risco_maximo_porcentagem', 5)) / 100
 
             if not chave_bybit or not secret_bybit:
-                print(f"\n[{datetime.now().strftime('%H:%M:%S')}] ⚠️ Chaves da Bybit ausentes. Preencha e salve na tela de Configurações!")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ Chaves da Bybit ausentes. Preencha e salve na tela de Configurações!")
                 time.sleep(60)
                 continue
 
@@ -161,7 +161,7 @@ def iniciar_robo():
             print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Mercado: Preço {preco_atual:.2f} | RSI {rsi_atual:.2f}")
             print(f"Meta configurada no painel: {meta_diaria*100}% | Risco: {risco_maximo*100}%")
             
-            # 3. Cérebro: Pede decisão para a IA passando a meta do painel
+            # 3. Cérebro: Pede decisão para a IA
             decisao, justificativa, contexto = consultar_cerebro_gemini(preco_atual, rsi_atual, (meta_diaria*100))
             
             print(f"Decisão: {decisao}")
@@ -169,7 +169,7 @@ def iniciar_robo():
             
             # 4. Ação Simulatória (Paper Trading)
             if decisao == "COMPRAR":
-                print("\n!!! GATILHO ACIONADO PELA IA !!! Iniciando Simulação do Mercado (Paper Trading)...")
+                print("\n!!! GATILHO ACIONADO PELA IA !!! Iniciando Simulação do Mercado...")
                 preco_entrada = preco_atual
                 preco_alvo = preco_entrada * (1 + meta_diaria)
                 preco_stop = preco_entrada * (1 - risco_maximo) 
