@@ -9,7 +9,6 @@ from google import genai
 # ==========================================
 # 1. PUXANDO AS VARIÁVEIS SEGURAS DO RAILWAY
 # ==========================================
-BASE44_APP_ID = os.environ.get("BASE44_APP_ID")
 BASE44_API_KEY = os.environ.get("BASE44_API_KEY")
 BYBIT_API_KEY = os.environ.get("BYBIT_API_KEY")
 BYBIT_API_SECRET = os.environ.get("BYBIT_API_SECRET")
@@ -20,9 +19,10 @@ BYBIT_API_SECRET = os.environ.get("BYBIT_API_SECRET")
 cliente_ia = genai.Client()
 MODELO_GEMINI = "gemini-3-flash-preview"
 
-BASE44_WEBHOOK_URL = f"https://api.base44.com/v1/apps/{BASE44_APP_ID}/functions/webhookRobo"
-BASE44_MEMORIA_URL = f"https://api.base44.com/v1/apps/{BASE44_APP_ID}/entities/Memoria_IA"
-BASE44_CONTROLE_URL = f"https://api.base44.com/v1/apps/{BASE44_APP_ID}/entities/ControleBot"
+# URLs REAIS E OFICIAIS DA SUA APLICAÇÃO BASE44
+BASE44_WEBHOOK_URL = "https://miraquant-ia.base44.app/api/functions/webhookRobo"
+BASE44_MEMORIA_URL = "https://miraquant-ia.base44.app/api/entities/Memoria_IA"
+BASE44_CONTROLE_URL = "https://miraquant-ia.base44.app/api/entities/ControleBot"
 
 # ==========================================
 # 3. PARÂMETROS DA ESTRATÉGIA MIRAQUANTIA
@@ -79,6 +79,7 @@ def calcular_rsi(fechamentos, periodo=14):
     return 100 - (100 / (1 + rs))
 
 def gravar_memoria_ia(contexto, decisao, justificativa):
+    """Grava o pensamento da IA usando a documentação oficial da API"""
     headers = {"Content-Type": "application/json", "api_key": BASE44_API_KEY}
     payload_memoria = {
         "data_hora": datetime.now().isoformat(),
@@ -95,7 +96,7 @@ def gravar_memoria_ia(contexto, decisao, justificativa):
             print("[Base44] SUCESSO! Pensamento gravado fisicamente na tabela Memoria_IA.")
         else:
             print(f"[Base44 - ERRO] A Base44 recusou a gravação! Status: {response.status_code}")
-            print(f"Detalhe do erro devolvido pela Base44: {response.text}")
+            print(f"Detalhe do erro: {response.text}")
     except Exception as e:
         print(f"[Base44 - ERRO] Problema de conexão ao tentar gravar a memória: {e}")
 
@@ -134,7 +135,6 @@ def consultar_cerebro_gemini(preco, rsi):
             model=MODELO_GEMINI,
             contents=prompt
         )
-        # CORREÇÃO AQUI: Uso de aspas duplas robustas para evitar erro de formatação no GitHub
         texto_resposta = resposta.text.replace("```json", "").replace("```", "").strip()
         analise = json.loads(texto_resposta)
         return analise['decisao'], analise['justificativa'], contexto
