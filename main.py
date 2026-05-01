@@ -20,8 +20,6 @@ BYBIT_API_SECRET = os.environ.get("BYBIT_API_SECRET")
 cliente_ia = genai.Client()
 MODELO_GEMINI = "gemini-3-flash-preview"
 
-# URLs dinâmicas da Base44 
-# (Se o erro 404 aparecer no log para a Base44, precisaremos conferir na documentação da Base44 qual é a URL base correta)
 BASE44_WEBHOOK_URL = f"https://api.base44.com/v1/apps/{BASE44_APP_ID}/functions/webhookRobo"
 BASE44_MEMORIA_URL = f"https://api.base44.com/v1/apps/{BASE44_APP_ID}/entities/Memoria_IA"
 BASE44_CONTROLE_URL = f"https://api.base44.com/v1/apps/{BASE44_APP_ID}/entities/ControleBot"
@@ -59,7 +57,7 @@ def verificar_kill_switch():
         response = requests.get(BASE44_CONTROLE_URL, headers=headers)
         if response.status_code not in [200, 201]:
             print(f"[Aviso] Falha de leitura do Kill Switch. Status: {response.status_code} | Detalhe: {response.text}")
-            return True # Em caso de falha de conexão, mantém ligado
+            return True
             
         texto_resposta = response.text.lower()
         if "parado" in texto_resposta or "inativo" in texto_resposta or "desligado" in texto_resposta:
@@ -93,7 +91,6 @@ def gravar_memoria_ia(contexto, decisao, justificativa):
     try:
         response = requests.post(BASE44_MEMORIA_URL, json=payload_memoria, headers=headers)
         
-        # Agora o código avalia a resposta verdadeira do servidor Base44
         if response.status_code in [200, 201]:
             print("[Base44] SUCESSO! Pensamento gravado fisicamente na tabela Memoria_IA.")
         else:
@@ -137,8 +134,8 @@ def consultar_cerebro_gemini(preco, rsi):
             model=MODELO_GEMINI,
             contents=prompt
         )
-        texto_resposta = resposta.text.replace('```json', '').replace('
-```', '').strip()
+        # CORREÇÃO AQUI: Uso de aspas duplas robustas para evitar erro de formatação no GitHub
+        texto_resposta = resposta.text.replace("```json", "").replace("```", "").strip()
         analise = json.loads(texto_resposta)
         return analise['decisao'], analise['justificativa'], contexto
     except Exception as e:
