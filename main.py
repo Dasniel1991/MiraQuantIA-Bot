@@ -21,7 +21,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 # Configura o cérebro do Gemini
 genai.configure(api_key=GEMINI_API_KEY)
 # Usamos o modelo flash por ser extremamente rápido para tomada de decisões financeiras
-modelo_ia = genai.GenerativeModel('gemini-1.5-flash')
+modelo_ia = genai.GenerativeModel('models/gemini-1.5-flash-latest')
 
 # URLs dinâmicas da Base44
 BASE44_WEBHOOK_URL = f"https://api.base44.com/v1/apps/{BASE44_APP_ID}/functions/webhookRobo"
