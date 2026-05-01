@@ -4,7 +4,7 @@ import requests
 import os
 import json
 from datetime import datetime
-from google import genai # Nova biblioteca do Google atualizada
+from google import genai
 
 # ==========================================
 # 1. PUXANDO AS VARIÁVEIS SEGURAS DO RAILWAY
@@ -13,7 +13,6 @@ BASE44_APP_ID = os.environ.get("BASE44_APP_ID")
 BASE44_API_KEY = os.environ.get("BASE44_API_KEY")
 BYBIT_API_KEY = os.environ.get("BYBIT_API_KEY")
 BYBIT_API_SECRET = os.environ.get("BYBIT_API_SECRET")
-# Nota: O novo SDK do Google (genai.Client) já puxa a variável GEMINI_API_KEY automaticamente do Railway.
 
 # ==========================================
 # 2. CONFIGURAÇÃO DA IA E DA BASE44
@@ -33,13 +32,19 @@ SYMBOL = 'BTC/USDT'
 TIMEFRAME = '15m'
 META_DIARIA = 0.02
 
+# ==========================================
+# 4. CONEXÃO BYBIT CORRIGIDA (Bypass de Região)
+# ==========================================
 try:
     exchange = ccxt.bybit({
         'apiKey': BYBIT_API_KEY,
         'secret': BYBIT_API_SECRET,
         'enableRateLimit': True,
         'urls': {
-            'api': 'https://api.bytick.com', # Mantendo a correção de região/bloqueio
+            'api': {
+                'public': 'https://api.bytick.com',
+                'private': 'https://api.bytick.com',
+            }
         },
         'options': {'defaultType': 'spot'}
     })
@@ -105,7 +110,6 @@ def consultar_cerebro_gemini(preco, rsi):
     """
     
     try:
-        # Nova chamada atualizada
         resposta = cliente_ia.models.generate_content(
             model=MODELO_GEMINI,
             contents=prompt
