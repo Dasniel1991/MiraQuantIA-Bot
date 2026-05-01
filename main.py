@@ -7,11 +7,10 @@ from datetime import datetime
 from google import genai
 
 # ==========================================
-# 1. PUXANDO AS VARIÁVEIS SEGURAS DO RAILWAY
+# 1. PUXANDO APENAS A CHAVE DA BASE44 DO RAILWAY
 # ==========================================
 BASE44_API_KEY = os.environ.get("BASE44_API_KEY")
-BYBIT_API_KEY = os.environ.get("BYBIT_API_KEY")
-BYBIT_API_SECRET = os.environ.get("BYBIT_API_SECRET")
+# As chaves da Bybit foram removidas daqui, pois agora virão dinamicamente da sua tela de Configurações!
 
 # ==========================================
 # 2. CONFIGURAÇÃO DA IA E DA BASE44
@@ -24,48 +23,23 @@ BASE44_WEBHOOK_URL = "https://miraquant-ia.base44.app/api/functions/webhookRobo"
 BASE44_MEMORIA_URL = "https://miraquant-ia.base44.app/api/entities/Memoria_IA"
 BASE44_CONTROLE_URL = "https://miraquant-ia.base44.app/api/entities/ControleBot"
 
-# ==========================================
-# 3. PARÂMETROS DA ESTRATÉGIA MIRAQUANTIA
-# ==========================================
 SYMBOL = 'BTC/USDT'
 TIMEFRAME = '15m'
-META_DIARIA = 0.02 # 2% de alvo
 
-# ==========================================
-# 4. CONEXÃO BYBIT (Bypass de Região)
-# ==========================================
-try:
-    exchange = ccxt.bybit({
-        'apiKey': BYBIT_API_KEY,
-        'secret': BYBIT_API_SECRET,
-        'enableRateLimit': True,
-        'urls': {
-            'api': {
-                'public': 'https://api.bytick.com',
-                'private': 'https://api.bytick.com',
-            }
-        },
-        'options': {'defaultType': 'spot'}
-    })
-except Exception as e:
-    print(f"Erro ao conectar com a Bybit: {e}")
-
-def verificar_kill_switch():
-    """Consulta a Base44 para ver se você apertou o botão de PARAR O ROBÔ no Dashboard."""
+def obter_configuracoes_painel():
+    """Consulta a entidade ControleBot na Base44 para pegar as chaves da Bybit e as Metas."""
     headers = {"Content-Type": "application/json", "api_key": BASE44_API_KEY}
     try:
         response = requests.get(BASE44_CONTROLE_URL, headers=headers)
-        if response.status_code not in [200, 201]:
-            print(f"[Aviso] Falha de leitura do Kill Switch. Status: {response.status_code} | Detalhe: {response.text}")
-            return True
-            
-        texto_resposta = response.text.lower()
-        if "parado" in texto_resposta or "inativo" in texto_resposta or "desligado" in texto_resposta:
-            return False 
-        return True 
+        if response.status_code in [200, 201]:
+            dados = response.json()
+            if len(dados) > 0:
+                return dados[0] # Retorna a primeira configuração de usuário encontrada
+        print(f"[Aviso] Nenhuma configuração encontrada no painel. Status: {response.status_code}")
+        return None
     except Exception as e:
-        print(f"[Aviso] Erro de código no Kill Switch: {e}")
-        return True
+        print(f"[Aviso] Erro de conexão com a Base44 ao buscar configurações: {e}")
+        return None
 
 def calcular_rsi(fechamentos, periodo=14):
     if len(fechamentos) < periodo + 1: return 50
@@ -79,7 +53,6 @@ def calcular_rsi(fechamentos, periodo=14):
     return 100 - (100 / (1 + rs))
 
 def gravar_memoria_ia(contexto, decisao, justificativa):
-    """Grava o pensamento da IA usando a documentação oficial da API"""
     headers = {"Content-Type": "application/json", "api_key": BASE44_API_KEY}
     payload_memoria = {
         "data_hora": datetime.now().isoformat(),
@@ -90,14 +63,9 @@ def gravar_memoria_ia(contexto, decisao, justificativa):
         "resultado_lucro_porcentagem": 0.00 
     }
     try:
-        response = requests.post(BASE44_MEMORIA_URL, json=payload_memoria, headers=headers)
-        
-        if response.status_code in [200, 201]:
-            print("[Base44] SUCESSO! Pensamento gravado fisicamente na tabela Memoria_IA.")
-        else:
-            print(f"[Base44 - ERRO] A Base44 recusou a gravação! Status: {response.status_code}")
+        requests.post(BASE44_MEMORIA_URL, json=payload_memoria, headers=headers)
     except Exception as e:
-        print(f"[Base44 - ERRO] Problema de conexão ao tentar gravar a memória: {e}")
+        print(f"[Base44 - ERRO] Problema ao gravar memória: {e}")
 
 def enviar_lucro_base44(payload_dados):
     headers = {"Content-Type": "application/json", "api_key": BASE44_API_KEY}
@@ -105,27 +73,24 @@ def enviar_lucro_base44(payload_dados):
         response = requests.post(BASE44_WEBHOOK_URL, json=payload_dados, headers=headers)
         if response.status_code in [200, 201]:
             print("[Base44] Dashboard atualizado com o lucro diário com sucesso!")
-        else:
-            print(f"[Base44 - ERRO] Falha ao enviar lucro. Status: {response.status_code}")
     except Exception as e:
         print(f"[Base44 - ERRO] Erro de comunicação com o Dashboard: {e}")
 
-def consultar_cerebro_gemini(preco, rsi):
+def consultar_cerebro_gemini(preco, rsi, meta_diaria_porcentagem):
     contexto = f"O ativo {SYMBOL} está custando {preco:.2f} USDT. O RSI atual no tempo gráfico de {TIMEFRAME} é de {rsi:.2f}."
     
     prompt = f"""
-    Você é o MiraQuantIA, um robô institucional de trading quantitativo focado em bater uma META DIÁRIA de 2% de lucro.
+    Você é o MiraQuantIA, um robô institucional de trading quantitativo focado em bater uma META DIÁRIA de {meta_diaria_porcentagem}%.
     Você é conservador, mas TEM a obrigação de encontrar janelas de oportunidade seguras todos os dias.
     
     Cenário atual do mercado:
     {contexto}
     
     Nova Regra de Operação Diária: 
-    - Não espere um crash extremo. 
-    - Um RSI abaixo de 55 já indica que o ativo corrigiu o suficiente para buscar um ganho rápido de 2%.
-    - Se o RSI estiver acima de 65, o mercado está esticado, então você deve IGNORAR para não comprar no topo.
+    - Um RSI abaixo de 55 já indica que o ativo corrigiu o suficiente para buscar um ganho rápido.
+    - Se o RSI estiver acima de 65, o mercado está esticado, então você deve IGNORAR.
     
-    Com base nesses dados para garantir o lucro de hoje, devemos COMPRAR agora? 
+    Com base nesses dados para garantir o lucro, devemos COMPRAR agora? 
     Responda EXATAMENTE neste formato JSON, sem adicionar mais nenhum texto ou formatação markdown:
     {{"decisao": "COMPRAR", "justificativa": "Sua explicação curta aqui"}}
     ou
@@ -141,7 +106,6 @@ def consultar_cerebro_gemini(preco, rsi):
         analise = json.loads(texto_resposta)
         return analise['decisao'], analise['justificativa'], contexto
     except Exception as e:
-        print(f"[Gemini] Erro ao consultar a IA: {e}")
         return "IGNORAR", f"Erro no processamento da IA: {e}", contexto
 
 def iniciar_robo():
@@ -151,80 +115,100 @@ def iniciar_robo():
     
     while True:
         try:
-            # 0. CONTROLE DE EMERGÊNCIA (Kill Switch)
-            if not verificar_kill_switch():
-                print(f"\n[{datetime.now().strftime('%H:%M:%S')}] 🛑 KILL SWITCH ATIVADO NO PAINEL. Robô em modo de espera...")
-                time.sleep(60) 
+            # 0. LER CONFIGURAÇÕES DA SUA TELA NA BASE44
+            config = obter_configuracoes_painel()
+            
+            if not config:
+                print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Aguardando você preencher as configurações no painel da Base44...")
+                time.sleep(60)
+                continue
+                
+            # Verifica o botão de ligar/desligar (Kill Switch)
+            status_bot = config.get('status_bot', False)
+            if status_bot == False or str(status_bot).lower() == 'false':
+                print(f"\n[{datetime.now().strftime('%H:%M:%S')}] 🛑 KILL SWITCH ATIVADO. Robô desligado no painel. Aguardando...")
+                time.sleep(60)
                 continue
 
-            # 1. Olhos: Coleta dados
+            # Pega as chaves e os parâmetros exatos que você digitou na tela
+            chave_bybit = config.get('chave_api')
+            secret_bybit = config.get('secret_api')
+            
+            # Pega a meta de lucro e o risco de perda da tela, dividindo por 100 para cálculo (ex: 2% vira 0.02)
+            meta_diaria = float(config.get('meta_diaria_porcentagem', 2)) / 100
+            risco_maximo = float(config.get('risco_maximo_porcentagem', 5)) / 100
+
+            if not chave_bybit or not secret_bybit:
+                print(f"\n[{datetime.now().strftime('%H:%M:%S')}] ⚠️ Chaves da Bybit ausentes. Preencha e salve na tela de Configurações!")
+                time.sleep(60)
+                continue
+
+            # 1. CONECTAR NA BYBIT DINAMICAMENTE
+            exchange = ccxt.bybit({
+                'apiKey': chave_bybit,
+                'secret': secret_bybit,
+                'enableRateLimit': True,
+                'urls': {'api': {'public': 'https://api.bytick.com', 'private': 'https://api.bytick.com'}},
+                'options': {'defaultType': 'spot'}
+            })
+
+            # 2. Olhos: Coleta dados
             velas = exchange.fetch_ohlcv(SYMBOL, timeframe=TIMEFRAME, limit=50)
             fechamentos = [vela[4] for vela in velas]
             preco_atual = fechamentos[-1]
             rsi_atual = calcular_rsi(fechamentos)
             
             print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Mercado: Preço {preco_atual:.2f} | RSI {rsi_atual:.2f}")
-            print("Enviando dados para o cérebro Gemini analisar com foco na META DIÁRIA...")
+            print(f"Meta configurada no painel: {meta_diaria*100}% | Risco: {risco_maximo*100}%")
             
-            # 2. Cérebro: Pede decisão para a IA
-            decisao, justificativa, contexto = consultar_cerebro_gemini(preco_atual, rsi_atual)
+            # 3. Cérebro: Pede decisão para a IA passando a meta do painel
+            decisao, justificativa, contexto = consultar_cerebro_gemini(preco_atual, rsi_atual, (meta_diaria*100))
             
-            print(f"Decisão da IA: {decisao}")
-            print(f"Justificativa: {justificativa}")
+            print(f"Decisão: {decisao}")
             gravar_memoria_ia(contexto, decisao, justificativa)
             
-            # 3. Ação Simulatória (Conta Demo Interna)
+            # 4. Ação Simulatória (Paper Trading)
             if decisao == "COMPRAR":
                 print("\n!!! GATILHO ACIONADO PELA IA !!! Iniciando Simulação do Mercado (Paper Trading)...")
                 preco_entrada = preco_atual
-                preco_alvo = preco_entrada * (1 + META_DIARIA) # +2%
-                preco_stop = preco_entrada * (1 - 0.05) # -5% de proteção (Stop Loss)
+                preco_alvo = preco_entrada * (1 + meta_diaria)
+                preco_stop = preco_entrada * (1 - risco_maximo) 
 
                 print(f"💰 COMPRA SIMULADA: {preco_entrada:.2f} USDT")
-                print(f"🎯 ALVO DA META DIÁRIA (+2%): {preco_alvo:.2f} USDT")
-                print(f"🛡️ STOP LOSS DE SEGURANÇA (-5%): {preco_stop:.2f} USDT")
-                print("Lendo o mercado real a cada 1 minuto para ver se a meta será batida...\n")
+                print(f"🎯 ALVO DA META (+{meta_diaria*100}%): {preco_alvo:.2f} USDT")
+                print(f"🛡️ STOP LOSS (-{risco_maximo*100}%): {preco_stop:.2f} USDT")
 
                 operacao_aberta = True
                 while operacao_aberta:
-                    time.sleep(60) # Ouve o mercado a cada 1 minuto
+                    time.sleep(60) 
                     try:
                         ticker = exchange.fetch_ticker(SYMBOL)
                         preco_agora = ticker['last']
                         
-                        distancia_alvo = preco_alvo - preco_agora
-                        print(f"[{datetime.now().strftime('%H:%M:%S')}] Preço atual: {preco_agora:.2f} | Faltam {distancia_alvo:.2f} USDT para bater a meta.")
-
                         if preco_agora >= preco_alvo:
-                            print("\n✅ VITÓRIA! O mercado atingiu o alvo de 2%. A IA tomou uma excelente decisão!")
-                            lucro_usdt = 15.00 # Lucro simulado diário para o painel
-                            
+                            print("\n✅ VITÓRIA! O mercado atingiu o alvo configurado no painel.")
                             payload_operacao = {
-                                "usuario_id": "admin@miraquantia.com", 
+                                "usuario_id": config.get("usuario_id", "admin@miraquantia.com"), 
                                 "par_moeda": SYMBOL,
                                 "tipo_ordem": "Compra",
                                 "preco_entrada": preco_entrada,
                                 "preco_saida": preco_agora,
-                                "lucro_porcentagem": META_DIARIA * 100,
-                                "lucro_financeiro": lucro_usdt,
+                                "lucro_porcentagem": meta_diaria * 100,
+                                "lucro_financeiro": 15.00, 
                                 "status": "Fechada"
                             }
                             enviar_lucro_base44(payload_operacao)
                             operacao_aberta = False
-                            print("Robô descansando 2 horas após bater a meta diária...")
                             time.sleep(7200)
 
                         elif preco_agora <= preco_stop:
-                            print("\n❌ STOP LOSS! O mercado caiu 5%. A IA falhou nessa entrada.")
+                            print(f"\n❌ STOP LOSS! O mercado caiu os {risco_maximo*100}% configurados.")
                             operacao_aberta = False
-                            print("Robô descansando antes de tentar novamente amanhã...")
                             time.sleep(3600)
 
                     except Exception as e:
-                        print(f"Erro de conexão ao monitorar a Bybit: {e}")
                         time.sleep(10)
             else:
-                print("Aguardando 15 minutos (fechamento da próxima vela) para economizar cota da API...")
                 time.sleep(900) 
 
         except Exception as e:
