@@ -196,7 +196,8 @@ def iniciar_robo():
                 print("Dormindo por 1 hora após a operação cirúrgica...")
                 time.sleep(3600)
             else:
-                time.sleep(120)
+                print("Aguardando 15 minutos (fechamento da próxima vela) para economizar cota da API gratuita...")
+                time.sleep(900) # <- AJUSTE DE OTIMIZAÇÃO: 900 segundos = 15 minutos
 
         except Exception as e:
             print(f"Erro no ciclo principal: {e}")
