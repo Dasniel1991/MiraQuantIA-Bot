@@ -4,7 +4,7 @@ import requests
 import os
 import json
 from datetime import datetime
-import google.generativeai as genai
+from google import genai # Nova biblioteca do Google atualizada
 
 # ==========================================
 # 1. PUXANDO AS VARIÁVEIS SEGURAS DO RAILWAY
@@ -13,15 +13,14 @@ BASE44_APP_ID = os.environ.get("BASE44_APP_ID")
 BASE44_API_KEY = os.environ.get("BASE44_API_KEY")
 BYBIT_API_KEY = os.environ.get("BYBIT_API_KEY")
 BYBIT_API_SECRET = os.environ.get("BYBIT_API_SECRET")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+# Nota: O novo SDK do Google (genai.Client) já puxa a variável GEMINI_API_KEY automaticamente do Railway.
 
 # ==========================================
 # 2. CONFIGURAÇÃO DA IA E DA BASE44
 # ==========================================
-# Configura o cérebro do Gemini
-genai.configure(api_key=GEMINI_API_KEY)
-# Usamos o modelo flash por ser extremamente rápido para tomada de decisões financeiras
-modelo_ia = genai.GenerativeModel('models/gemini-1.5-flash-latest')
+# Inicializa o novo cliente da IA conforme a documentação mais recente
+cliente_ia = genai.Client()
+MODELO_GEMINI = "gemini-3-flash-preview"
 
 # URLs dinâmicas da Base44
 BASE44_WEBHOOK_URL = f"https://api.base44.com/v1/apps/{BASE44_APP_ID}/functions/webhookRobo"
@@ -39,6 +38,9 @@ try:
         'apiKey': BYBIT_API_KEY,
         'secret': BYBIT_API_SECRET,
         'enableRateLimit': True,
+        'urls': {
+            'api': 'https://api.bytick.com', # Mantendo a correção de região/bloqueio
+        },
         'options': {'defaultType': 'spot'}
     })
 except Exception as e:
@@ -83,7 +85,7 @@ def enviar_lucro_base44(payload_dados):
         print(f"[Base44] Erro de comunicação com o Dashboard: {e}")
 
 def consultar_cerebro_gemini(preco, rsi):
-    """Envia os dados do mercado para o Gemini e pede a decisão."""
+    """Envia os dados do mercado para o Gemini e pede a decisão usando a nova API."""
     contexto = f"O ativo {SYMBOL} está custando {preco:.2f} USDT. O RSI atual no tempo gráfico de {TIMEFRAME} é de {rsi:.2f}."
     
     prompt = f"""
@@ -103,7 +105,11 @@ def consultar_cerebro_gemini(preco, rsi):
     """
     
     try:
-        resposta = modelo_ia.generate_content(prompt)
+        # Nova chamada atualizada
+        resposta = cliente_ia.models.generate_content(
+            model=MODELO_GEMINI,
+            contents=prompt
+        )
         texto_resposta = resposta.text.replace('```json', '').replace('```', '').strip()
         analise = json.loads(texto_resposta)
         return analise['decisao'], analise['justificativa'], contexto
