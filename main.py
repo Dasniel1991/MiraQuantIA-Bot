@@ -29,7 +29,7 @@ BASE44_CONTROLE_URL = "https://miraquant-ia.base44.app/api/entities/ControleBot"
 # ==========================================
 SYMBOL = 'BTC/USDT'
 TIMEFRAME = '15m'
-META_DIARIA = 0.02
+META_DIARIA = 0.02 # 2% de alvo
 
 # ==========================================
 # 4. CONEXÃO BYBIT (Bypass de Região)
@@ -96,7 +96,6 @@ def gravar_memoria_ia(contexto, decisao, justificativa):
             print("[Base44] SUCESSO! Pensamento gravado fisicamente na tabela Memoria_IA.")
         else:
             print(f"[Base44 - ERRO] A Base44 recusou a gravação! Status: {response.status_code}")
-            print(f"Detalhe do erro: {response.text}")
     except Exception as e:
         print(f"[Base44 - ERRO] Problema de conexão ao tentar gravar a memória: {e}")
 
@@ -105,9 +104,9 @@ def enviar_lucro_base44(payload_dados):
     try:
         response = requests.post(BASE44_WEBHOOK_URL, json=payload_dados, headers=headers)
         if response.status_code in [200, 201]:
-            print("[Base44] Dashboard atualizado com sucesso!")
+            print("[Base44] Dashboard atualizado com o lucro diário com sucesso!")
         else:
-            print(f"[Base44 - ERRO] Falha ao enviar lucro. Status: {response.status_code} | Detalhe: {response.text}")
+            print(f"[Base44 - ERRO] Falha ao enviar lucro. Status: {response.status_code}")
     except Exception as e:
         print(f"[Base44 - ERRO] Erro de comunicação com o Dashboard: {e}")
 
@@ -115,15 +114,18 @@ def consultar_cerebro_gemini(preco, rsi):
     contexto = f"O ativo {SYMBOL} está custando {preco:.2f} USDT. O RSI atual no tempo gráfico de {TIMEFRAME} é de {rsi:.2f}."
     
     prompt = f"""
-    Você é o MiraQuantIA, um robô institucional de trading quantitativo ultraconservador.
-    Sua meta é conseguir operações cirúrgicas de 2% de lucro. Você só entra se a probabilidade for maior que 90%.
+    Você é o MiraQuantIA, um robô institucional de trading quantitativo focado em bater uma META DIÁRIA de 2% de lucro.
+    Você é conservador, mas TEM a obrigação de encontrar janelas de oportunidade seguras todos os dias.
     
     Cenário atual do mercado:
     {contexto}
     
-    Regra: Um RSI abaixo de 30 indica sobrevenda extrema (boa chance de subida). RSI acima de 70 é risco de queda.
+    Nova Regra de Operação Diária: 
+    - Não espere um crash extremo. 
+    - Um RSI abaixo de 55 já indica que o ativo corrigiu o suficiente para buscar um ganho rápido de 2%.
+    - Se o RSI estiver acima de 65, o mercado está esticado, então você deve IGNORAR para não comprar no topo.
     
-    Com base nesses dados rigorosos, devemos COMPRAR agora? 
+    Com base nesses dados para garantir o lucro de hoje, devemos COMPRAR agora? 
     Responda EXATAMENTE neste formato JSON, sem adicionar mais nenhum texto ou formatação markdown:
     {{"decisao": "COMPRAR", "justificativa": "Sua explicação curta aqui"}}
     ou
@@ -144,7 +146,7 @@ def consultar_cerebro_gemini(preco, rsi):
 
 def iniciar_robo():
     print("==================================================")
-    print("=== MIRAQUANTIA AUTÔNOMO LIGADO (GEMINI CORE) ===")
+    print("=== MIRAQUANTIA AUTÔNOMO LIGADO (CONTA DEMO) ===")
     print("==================================================")
     
     while True:
@@ -162,42 +164,68 @@ def iniciar_robo():
             rsi_atual = calcular_rsi(fechamentos)
             
             print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Mercado: Preço {preco_atual:.2f} | RSI {rsi_atual:.2f}")
-            print("Enviando dados para o cérebro Gemini analisar...")
+            print("Enviando dados para o cérebro Gemini analisar com foco na META DIÁRIA...")
             
             # 2. Cérebro: Pede decisão para a IA
             decisao, justificativa, contexto = consultar_cerebro_gemini(preco_atual, rsi_atual)
             
             print(f"Decisão da IA: {decisao}")
             print(f"Justificativa: {justificativa}")
-            
-            # 3. Memória: Salva tudo na Base44 para aprendizado futuro
             gravar_memoria_ia(contexto, decisao, justificativa)
             
-            # 4. Ação: Puxa o gatilho se a IA mandar
+            # 3. Ação Simulatória (Conta Demo Interna)
             if decisao == "COMPRAR":
-                print("!!! GATILHO ACIONADO PELA IA !!! Operando...")
-                
-                preco_saida = preco_atual * (1 + META_DIARIA)
-                lucro_usdt = 15.00 
-                
-                payload_operacao = {
-                    "usuario_id": "admin@miraquantia.com", 
-                    "par_moeda": SYMBOL,
-                    "tipo_ordem": "Compra",
-                    "preco_entrada": preco_atual,
-                    "preco_saida": preco_saida,
-                    "lucro_porcentagem": META_DIARIA * 100,
-                    "lucro_financeiro": lucro_usdt,
-                    "status": "Fechada"
-                }
-                
-                enviar_lucro_base44(payload_operacao)
-                
-                print("Dormindo por 1 hora após a operação cirúrgica...")
-                time.sleep(3600)
+                print("\n!!! GATILHO ACIONADO PELA IA !!! Iniciando Simulação do Mercado (Paper Trading)...")
+                preco_entrada = preco_atual
+                preco_alvo = preco_entrada * (1 + META_DIARIA) # +2%
+                preco_stop = preco_entrada * (1 - 0.05) # -5% de proteção (Stop Loss)
+
+                print(f"💰 COMPRA SIMULADA: {preco_entrada:.2f} USDT")
+                print(f"🎯 ALVO DA META DIÁRIA (+2%): {preco_alvo:.2f} USDT")
+                print(f"🛡️ STOP LOSS DE SEGURANÇA (-5%): {preco_stop:.2f} USDT")
+                print("Lendo o mercado real a cada 1 minuto para ver se a meta será batida...\n")
+
+                operacao_aberta = True
+                while operacao_aberta:
+                    time.sleep(60) # Ouve o mercado a cada 1 minuto
+                    try:
+                        ticker = exchange.fetch_ticker(SYMBOL)
+                        preco_agora = ticker['last']
+                        
+                        distancia_alvo = preco_alvo - preco_agora
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] Preço atual: {preco_agora:.2f} | Faltam {distancia_alvo:.2f} USDT para bater a meta.")
+
+                        if preco_agora >= preco_alvo:
+                            print("\n✅ VITÓRIA! O mercado atingiu o alvo de 2%. A IA tomou uma excelente decisão!")
+                            lucro_usdt = 15.00 # Lucro simulado diário para o painel
+                            
+                            payload_operacao = {
+                                "usuario_id": "admin@miraquantia.com", 
+                                "par_moeda": SYMBOL,
+                                "tipo_ordem": "Compra",
+                                "preco_entrada": preco_entrada,
+                                "preco_saida": preco_agora,
+                                "lucro_porcentagem": META_DIARIA * 100,
+                                "lucro_financeiro": lucro_usdt,
+                                "status": "Fechada"
+                            }
+                            enviar_lucro_base44(payload_operacao)
+                            operacao_aberta = False
+                            print("Robô descansando 2 horas após bater a meta diária...")
+                            time.sleep(7200)
+
+                        elif preco_agora <= preco_stop:
+                            print("\n❌ STOP LOSS! O mercado caiu 5%. A IA falhou nessa entrada.")
+                            operacao_aberta = False
+                            print("Robô descansando antes de tentar novamente amanhã...")
+                            time.sleep(3600)
+
+                    except Exception as e:
+                        print(f"Erro de conexão ao monitorar a Bybit: {e}")
+                        time.sleep(10)
             else:
-                print("Aguardando 15 minutos (fechamento da próxima vela) para economizar cota da API gratuita...")
-                time.sleep(900) # <- AJUSTE DE OTIMIZAÇÃO: 900 segundos = 15 minutos
+                print("Aguardando 15 minutos (fechamento da próxima vela) para economizar cota da API...")
+                time.sleep(900) 
 
         except Exception as e:
             print(f"Erro no ciclo principal: {e}")
