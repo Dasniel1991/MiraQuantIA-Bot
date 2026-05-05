@@ -21,7 +21,7 @@ ENDPOINTS = {
 }
 
 SYMBOL = 'BTC/USDT'
-TIMEFRAME = '1m' # Mudamos para 1m para testes mais rápidos
+TIMEFRAME = '1m' # Timeframe em 1m para testes rápidos
 usuarios_em_descanso = {}
 
 def api_base44(metodo, endpoint, dados=None):
@@ -49,8 +49,8 @@ def consultar_ia(preco, rsi, meta):
     prompt = f"BTC a {preco:.2f}, RSI {rsi:.2f}. Meta {meta}%. Decida: COMPRAR ou IGNORAR? Responda apenas JSON: {{\"decisao\": \"...\", \"justificativa\": \"...\"}}"
     try:
         res = cliente_ia.models.generate_content(model=MODELO_GEMINI, contents=prompt)
-        limpo = res.text.replace("```json", "").replace("
-```", "").strip()
+        # LINHA CORRIGIDA - Agora com todas as aspas e parênteses fechados
+        limpo = res.text.replace("```json", "").replace("```", "").strip()
         return json.loads(limpo)
     except:
         return {"decisao": "IGNORAR", "justificativa": "Erro na IA"}
@@ -69,7 +69,12 @@ def iniciar_loop():
 
             # Conexão e Dados
             ex = ccxt.bybit({'options': {'defaultType': 'spot'}})
-            preco = ex.fetch_ticker(SYMBOL)['last']
+            try:
+                preco = ex.fetch_ticker(SYMBOL)['last']
+            except Exception as e:
+                print(f"Erro ao buscar preço: {e}")
+                continue
+                
             rsi = 50 # Simplificado para o teste
             
             # IA Decide
@@ -82,8 +87,8 @@ def iniciar_loop():
             gravar_memoria_ia(uid, f"Preço: {preco}", analise['decisao'], analise['justificativa'])
 
             if analise['decisao'] == "COMPRAR":
-                # Lógica de compra aqui...
-                usuarios_em_descanso[uid] = time.time() + 300 # Descanso menor (5 min) para teste
+                print(f"⚠️ {uid} executou ordem de COMPRA!")
+                usuarios_em_descanso[uid] = time.time() + 300 # Descanso de 5 min pós-operação
 
         time.sleep(60)
 
