@@ -54,6 +54,9 @@ def api_base44(metodo, endpoint, dados=None, id_registro=None):
 # 3. O CÉREBRO: A IA GESTORA (A CADA 25 MINUTOS)
 # ==========================================
 def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual):
+    # CORREÇÃO AQUI: Avisando ao Python logo de cara que vamos usar a variável global
+    global historico_hora 
+
     uid = usuario.get("usuario_id")
     id_banco = usuario.get("id") # Pega o ID da linha do usuário na Base44
     rsi_antigo = usuario.get("rsi_alvo_compra", 35)
