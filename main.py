@@ -18,7 +18,7 @@ MODELO_GEMINI = "gemini-3-flash-preview"
 BASE_URL = "https://miraquant-ia.base44.app/api"
 ENDPOINTS = {
     "controle": f"{BASE_URL}/entities/ControleBot",
-    "historico": f"{BASE_URL}/entities/HistoricoOperacoes"
+    "operacao": f"{BASE_URL}/entities/Operacao" # CORRIGIDO: Nome exato da tabela na Base44
 }
 
 SYMBOL = 'BTC/USDT'
@@ -43,30 +43,34 @@ def api_base44(metodo, endpoint, dados=None, id_registro=None):
         elif metodo == "PUT": 
             res = requests.put(url, json=dados, headers=headers)
         
-        if res.status_code not in [200, 201, 204]: return []
+        if res.status_code not in [200, 201, 204]: 
+            # Log detalhado se a Base44 recusar novamente
+            if metodo == "POST": print(f"❌ Erro Base44 ({res.status_code}): {res.text}")
+            return []
         if res.text.strip() == "": return True 
         return res.json()
     except Exception as e:
         print(f"Erro API Base44: {e}")
         return []
 
-def registrar_operacao_no_painel(usuario, tipo_conta, preco, acao, categoria="Real"):
-    """Envia os dados exatos para o gráfico e histórico do painel na Base44"""
+def registrar_operacao_no_painel(usuario, preco, acao, categoria="Real"):
+    """Envia os dados exatos de acordo com as colunas da tabela Operacao na Base44"""
+    # Garante que 'acao' seja apenas "Compra" ou "Venda" para não dar erro no Enum da Base44
+    tipo_ordem_valida = "Compra" if acao not in ["Compra", "Venda"] else acao
+
     payload = {
         "usuario_id": usuario.get("usuario_id"),
         "par_moeda": SYMBOL,
-        "tipo_conta": tipo_conta, 
-        "tipo_ordem": acao,       # 'Compra' ou 'Venda' (ou 'Observação' para fantasmas)
+        "tipo_ordem": tipo_ordem_valida,       
+        "categoria_ordem": categoria, # 'Real', 'Demo' ou 'Fantasma'
         "preco_entrada": preco,
         "data_hora": datetime.now().isoformat(),
-        "status": "Aberta" if acao == "Compra" else "Fechada",
-        "categoria_ordem": categoria, # 'Real', 'Demo' ou 'Fantasma'
-        "timestamp_grafico": int(time.time() * 1000)
+        "status": "Aberta" if tipo_ordem_valida == "Compra" else "Fechada"
     }
     
-    res = api_base44("POST", ENDPOINTS["historico"], payload)
+    res = api_base44("POST", ENDPOINTS["operacao"], payload)
     if not res:
-        print(f"❌ Falha ao enviar a operação ({categoria}) para a Base44. Verifique as colunas da tabela.")
+        print(f"❌ Falha ao salvar no banco de dados.")
 
 # ==========================================
 # 3. O CÉREBRO: A IA GESTORA (A CADA 25 MINUTOS)
@@ -152,7 +156,10 @@ def iniciar_loop():
             
             for user in configs:
                 uid = user.get("usuario_id")
-                modo_operacao = str(user.get("modo_operacao", "demo")).lower()
+                
+                # Vamos descobrir se o usuário está no modo Demo ou Real na Base44
+                # (Se não tiver a coluna, o padrão será 'Demo')
+                modo_operacao = str(user.get("modo_operacao", "Demo")).capitalize() 
 
                 if not user.get("status_bot"): continue
                 
@@ -183,15 +190,17 @@ def iniciar_loop():
                         ordens_fantasma[uid].remove(ordem)
                         print(f"👻 [FANTASMA] {uid} - Oportunidade ignorada deu PREJUÍZO.")
 
-                # 3. Decisão do Operário (AGORA COM ENVIO PARA A BASE44)
+                # 3. Decisão do Operário (ENVIO PARA A BASE44)
                 if rsi <= limite_rsi:
                     print(f"⚠️ [MERCADO] {uid} - RSI atingiu a meta ({limite_rsi})! Robô executando COMPRA!")
-                    registrar_operacao_no_painel(user, modo_operacao, preco, "Compra", categoria="Real")
                     
-                    # Simula a contabilização de uma vitória real (futuramente você ligará isso à venda real)
+                    # Usa 'Real' ou 'Demo' baseado na configuração do usuário
+                    categoria_da_ordem = "Real" if modo_operacao == "Real" else "Demo"
+                    registrar_operacao_no_painel(user, preco, "Compra", categoria=categoria_da_ordem)
+                    
                     historico_hora[uid]['reais_vitorias'] += 1 
                 
-                # 4. Criação de Ordem Fantasma (AGORA COM ENVIO PARA A BASE44)
+                # 4. Criação de Ordem Fantasma (ENVIO PARA A BASE44)
                 elif rsi <= (limite_rsi + 15):
                     ordens_fantasma[uid].append({
                         "preco_entrada": preco,
@@ -200,8 +209,8 @@ def iniciar_loop():
                     })
                     print(f"👁️ [OLHEIRO] {uid} - RSI em {rsi}. Registrado como Fantasma e enviado ao Dashboard.")
                     
-                    # Envia para a Base44 para aparecer no seu extrato!
-                    registrar_operacao_no_painel(user, "demo", preco, "Observacao", categoria="Fantasma")
+                    # Envia a ordem como Fantasma para a tabela Operacao
+                    registrar_operacao_no_painel(user, preco, "Compra", categoria="Fantasma")
 
             time.sleep(60)
 
