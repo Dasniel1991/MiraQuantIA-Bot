@@ -31,8 +31,15 @@ def api_base44(metodo, endpoint, dados=None):
             res = requests.get(endpoint, headers=headers)
         else:
             res = requests.post(endpoint, json=dados, headers=headers)
-        return res.json() if res.status_code in [200, 201] else []
-    except:
+        
+        if res.status_code not in [200, 201]:
+            # ISSO AQUI VAI NOS MOSTRAR O ERRO EXATO DA BASE44
+            print(f"❌ [ERRO BASE44] Código {res.status_code}: {res.text}")
+            return []
+        
+        return res.json()
+    except Exception as e:
+        print(f"❌ [ERRO CONEXÃO] falha ao conectar na Base44: {e}")
         return []
 
 def gravar_memoria_ia(usuario, contexto, decisao, justificativa):
@@ -43,22 +50,30 @@ def gravar_memoria_ia(usuario, contexto, decisao, justificativa):
         "decisao_ia": decisao,
         "justificativa": justificativa
     }
+    # Tenta gravar e se der erro, o novo api_base44 vai gritar no log
     api_base44("POST", ENDPOINTS["memoria"], payload)
 
 def consultar_ia(preco, rsi, meta):
     prompt = f"BTC a {preco:.2f}, RSI {rsi:.2f}. Meta {meta}%. Decida: COMPRAR ou IGNORAR? Responda apenas JSON: {{\"decisao\": \"...\", \"justificativa\": \"...\"}}"
     try:
         res = cliente_ia.models.generate_content(model=MODELO_GEMINI, contents=prompt)
-        # LINHA CORRIGIDA - Agora com todas as aspas e parênteses fechados
         limpo = res.text.replace("```json", "").replace("```", "").strip()
         return json.loads(limpo)
-    except:
+    except Exception as e:
+        # MOSTRA O ERRO EXATO DA IA (Pode ser limite de uso ou falha na leitura)
+        print(f"❌ [ERRO GEMINI] Detalhe da falha: {e}")
         return {"decisao": "IGNORAR", "justificativa": "Erro na IA"}
 
 def iniciar_loop():
-    print("🚀 MIRAQUANTIA ONLINE - MONITORAMENTO ATIVO 24/7")
+    print("🚀 MIRAQUANTIA ONLINE - MONITORAMENTO ATIVO 24/7 (MODO DEBUG)")
     while True:
         configs = api_base44("GET", ENDPOINTS["controle"])
+        
+        if not configs:
+            print("⏳ Aguardando usuários ou falha na leitura da Base44...")
+            time.sleep(60)
+            continue
+
         for user in configs:
             uid = user.get("usuario_id")
             if not user.get("status_bot"): continue
@@ -72,7 +87,7 @@ def iniciar_loop():
             try:
                 preco = ex.fetch_ticker(SYMBOL)['last']
             except Exception as e:
-                print(f"Erro ao buscar preço: {e}")
+                print(f"Erro ao buscar preço na Bybit: {e}")
                 continue
                 
             rsi = 50 # Simplificado para o teste
@@ -80,7 +95,7 @@ def iniciar_loop():
             # IA Decide
             analise = consultar_ia(preco, rsi, user.get('meta_diaria_porcentagem', 2))
             
-            # LOG DE PENSAMENTO (Para você ver no Coolify)
+            # LOG DE PENSAMENTO 
             print(f"[{datetime.now().strftime('%H:%M')}] Usuário: {uid} | IA diz: {analise['decisao']} | Motivo: {analise['justificativa']}")
             
             # Sempre grava na memória para você ver na Base44
