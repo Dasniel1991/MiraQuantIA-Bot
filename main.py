@@ -24,13 +24,13 @@ ENDPOINTS = {
 SYMBOL = 'BTC/USDT'
 TIMEFRAME = '1m'
 
-# Memória RAM do Robô (Agora é separada por usuário!)
+# Memória RAM do Robô 
 ordens_fantasma = {}
 historico_hora = {}
 ultima_reuniao_ia = {}
 
 # ==========================================
-# 2. FUNÇÕES DE APOIO
+# 2. FUNÇÕES DE APOIO E COMUNICAÇÃO BASE44
 # ==========================================
 def api_base44(metodo, endpoint, dados=None, id_registro=None):
     headers = {"Content-Type": "application/json", "api_key": BASE44_API_KEY}
@@ -40,7 +40,7 @@ def api_base44(metodo, endpoint, dados=None, id_registro=None):
             res = requests.get(url, headers=headers)
         elif metodo == "POST":
             res = requests.post(url, json=dados, headers=headers)
-        elif metodo == "PUT": # Comando para ATUALIZAR a regra da IA no banco
+        elif metodo == "PUT": 
             res = requests.put(url, json=dados, headers=headers)
         
         if res.status_code not in [200, 201, 204]: return []
@@ -50,21 +50,37 @@ def api_base44(metodo, endpoint, dados=None, id_registro=None):
         print(f"Erro API Base44: {e}")
         return []
 
+def registrar_operacao_no_painel(usuario, tipo_conta, preco, acao, categoria="Real"):
+    """Envia os dados exatos para o gráfico e histórico do painel na Base44"""
+    payload = {
+        "usuario_id": usuario.get("usuario_id"),
+        "par_moeda": SYMBOL,
+        "tipo_conta": tipo_conta, 
+        "tipo_ordem": acao,       # 'Compra' ou 'Venda' (ou 'Observação' para fantasmas)
+        "preco_entrada": preco,
+        "data_hora": datetime.now().isoformat(),
+        "status": "Aberta" if acao == "Compra" else "Fechada",
+        "categoria_ordem": categoria, # 'Real', 'Demo' ou 'Fantasma'
+        "timestamp_grafico": int(time.time() * 1000)
+    }
+    
+    res = api_base44("POST", ENDPOINTS["historico"], payload)
+    if not res:
+        print(f"❌ Falha ao enviar a operação ({categoria}) para a Base44. Verifique as colunas da tabela.")
+
 # ==========================================
 # 3. O CÉREBRO: A IA GESTORA (A CADA 25 MINUTOS)
 # ==========================================
 def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual):
-    # CORREÇÃO AQUI: Avisando ao Python logo de cara que vamos usar a variável global
     global historico_hora 
 
     uid = usuario.get("usuario_id")
-    id_banco = usuario.get("id") # Pega o ID da linha do usuário na Base44
+    id_banco = usuario.get("id") 
     rsi_antigo = usuario.get("rsi_alvo_compra", 35)
     
     print(f"\n" + "="*50)
     print(f"🧠 [IA GESTORA] Iniciando análise de 25 min para: {uid}")
     
-    # Garante que o histórico existe para não quebrar o código
     if uid not in historico_hora:
         historico_hora[uid] = {"reais_vitorias": 0, "reais_derrotas": 0, "fantasma_vitorias": 0, "fantasma_derrotas": 0}
         
@@ -94,7 +110,6 @@ def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual):
         limpo = res.text.replace("```json", "").replace("```", "").strip()
         nova_regra = json.loads(limpo)
         
-        # Envia a nova regra e a mensagem escrita direto para a Base44!
         payload_atualizacao = {
             "rsi_alvo_compra": nova_regra["rsi_alvo_compra"],
             "observacao_ia": nova_regra["observacao_ia"]
@@ -105,7 +120,6 @@ def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual):
         print(f"📝 Justificativa: {nova_regra['observacao_ia']}")
         print("="*50 + "\n")
         
-        # Zera o placar para começar o novo ciclo de 25 minutos
         historico_hora[uid] = {"reais_vitorias": 0, "reais_derrotas": 0, "fantasma_vitorias": 0, "fantasma_derrotas": 0}
         
     except Exception as e:
@@ -138,6 +152,8 @@ def iniciar_loop():
             
             for user in configs:
                 uid = user.get("usuario_id")
+                modo_operacao = str(user.get("modo_operacao", "demo")).lower()
+
                 if not user.get("status_bot"): continue
                 
                 # Inicializa a memória do usuário
@@ -150,7 +166,6 @@ def iniciar_loop():
                     reuniao_com_ia_gestora(user, preco, rsi)
                     ultima_reuniao_ia[uid] = time.time()
                     
-                    # Atualiza o limite_rsi na memória imediatamente após a IA mudar
                     user['rsi_alvo_compra'] = api_base44("GET", ENDPOINTS["controle"], id_registro=user.get("id")).get("rsi_alvo_compra", 35)
 
                 limite_rsi = user.get("rsi_alvo_compra", 35)
@@ -168,19 +183,25 @@ def iniciar_loop():
                         ordens_fantasma[uid].remove(ordem)
                         print(f"👻 [FANTASMA] {uid} - Oportunidade ignorada deu PREJUÍZO.")
 
-                # 3. Decisão do Operário
+                # 3. Decisão do Operário (AGORA COM ENVIO PARA A BASE44)
                 if rsi <= limite_rsi:
                     print(f"⚠️ [MERCADO] {uid} - RSI atingiu a meta ({limite_rsi})! Robô executando COMPRA!")
-                    # TODO: Adicionar lógica real de compra e envio para HistoricoOperacoes
+                    registrar_operacao_no_painel(user, modo_operacao, preco, "Compra", categoria="Real")
+                    
+                    # Simula a contabilização de uma vitória real (futuramente você ligará isso à venda real)
+                    historico_hora[uid]['reais_vitorias'] += 1 
                 
-                # 4. Criação de Ordem Fantasma (Se chegou a 15 pontos de distância da meta)
+                # 4. Criação de Ordem Fantasma (AGORA COM ENVIO PARA A BASE44)
                 elif rsi <= (limite_rsi + 15):
                     ordens_fantasma[uid].append({
                         "preco_entrada": preco,
                         "preco_alvo": preco * 1.02, # Alvo de 2%
                         "preco_stop": preco * 0.95  # Stop de 5%
                     })
-                    print(f"👁️ [OLHEIRO] {uid} - RSI em {rsi}. Registrado como Fantasma para análise futura.")
+                    print(f"👁️ [OLHEIRO] {uid} - RSI em {rsi}. Registrado como Fantasma e enviado ao Dashboard.")
+                    
+                    # Envia para a Base44 para aparecer no seu extrato!
+                    registrar_operacao_no_painel(user, "demo", preco, "Observacao", categoria="Fantasma")
 
             time.sleep(60)
 
