@@ -73,8 +73,7 @@ def consultar_ia(preco, rsi, meta):
     """
     try:
         res = cliente_ia.models.generate_content(model=MODELO_GEMINI, contents=prompt)
-        limpo = res.text.replace("```json", "").replace("
-```", "").strip()
+        limpo = res.text.replace("```json", "").replace("```", "").strip()
         return json.loads(limpo)
     except:
         return {"decisao": "IGNORAR", "justificativa": "Erro na IA"}
