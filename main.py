@@ -45,7 +45,6 @@ def api_base44(metodo, endpoint, dados=None, id_registro=None):
     except: return None
 
 def calcular_rsi_real(exchange):
-    """Calcula a força real do mercado na corretora Bybit"""
     try:
         velas = exchange.fetch_ohlcv(SYMBOL, timeframe='1m', limit=15)
         fechamentos = [v[4] for v in velas]
@@ -61,19 +60,15 @@ def calcular_rsi_real(exchange):
     except: return 50
 
 def atualizar_dashboard_total(usuario, lucro_operacao_pct):
-    """Atualiza Saldo e Meta Diária no Dashboard Base44"""
     uid = usuario['usuario_id']
-    
-    # Atualiza Saldo[cite: 2]
     saldos = api_base44("GET", ENDPOINTS["saldo"])
     if saldos:
         reg_saldo = next((s for s in saldos if s['usuario_id'] == uid), None)
         if reg_saldo:
-            valor_financeiro = 100 * (lucro_operacao_pct / 100) # Banca simulada de $100
+            valor_financeiro = 100 * (lucro_operacao_pct / 100)
             novo_saldo = float(reg_saldo.get('saldo_demo', 0)) + valor_financeiro
             api_base44("PUT", ENDPOINTS["saldo"], {"saldo_demo": novo_saldo}, id_registro=reg_saldo['id'])
 
-    # Atualiza Progresso Meta[cite: 6]
     lucro_acumulado = float(usuario.get("lucro_hoje_porcentagem") or 0.0) + lucro_operacao_pct
     api_base44("PUT", ENDPOINTS["controle"], {
         "lucro_hoje_porcentagem": lucro_acumulado,
@@ -135,12 +130,10 @@ def iniciar_loop():
                 if uid not in ordens_fantasma: ordens_fantasma[uid] = []
                 if uid not in historico_hora: historico_hora[uid] = {"reais_vitorias": 0, "reais_derrotas": 0, "fantasma_vitorias": 0, "fantasma_derrotas": 0}
 
-                # 1. Verifica se atingiu a meta diária[cite: 6]
                 if lucro_hoje >= meta:
                     print(f"   🛑 [{uid}] IGNORANDO: Meta diária de {meta}% já atingida ({lucro_hoje:.2f}%).")
                     continue
 
-                # 2. Chama a IA a cada 25 minutos
                 if time.time() - ultima_reuniao_ia[uid] > 1500:
                     reuniao_com_ia_gestora(user, preco, rsi)
                     ultima_reuniao_ia[uid] = time.time()
@@ -154,7 +147,7 @@ def iniciar_loop():
                     lucro_pct = ((preco - op["entrada"]) / op["entrada"]) * 100
                     print(f"   👁️ [{uid}] VIGIANDO ORDEM | Entrada: {op['entrada']} | Atual: {preco} | Lucro: {lucro_pct:.2f}%")
                     
-                    if lucro_pct >= 0.5 or lucro_pct <= -1.0: # Alvos de Take Profit e Stop Loss
+                    if lucro_pct >= 0.5 or lucro_pct <= -1.0: 
                         print(f"   💰 [{uid}] FECHANDO ORDEM! Lucro: {lucro_pct:.2f}%")
                         api_base44("PUT", ENDPOINTS["operacao"], {
                             "preco_saida": preco, "lucro_porcentagem": lucro_pct, "status": "Fechada"
@@ -173,26 +166,45 @@ def iniciar_loop():
                             "categoria_ordem": modo, "preco_entrada": preco,
                             "data_hora": datetime.now().isoformat(), "status": "Aberta"
                         })
-                        if res: operacoes_abertas[uid] = {"id": res['id'], "entrada": preco}
+                        if res and 'id' in res: operacoes_abertas[uid] = {"id": res['id'], "entrada": preco}
 
                     elif rsi <= (limite_rsi + 15):
                         print(f"   👻 [{uid}] RSI perto do alvo ({rsi:.2f}). Criando ORDEM FANTASMA para estudo.")
-                        ordens_fantasma[uid].append({"entrada": preco, "alvo": preco * 1.005, "stop": preco * 0.99})
-                        api_base44("POST", ENDPOINTS["operacao"], {
+                        res = api_base44("POST", ENDPOINTS["operacao"], {
                             "usuario_id": uid, "par_moeda": SYMBOL, "tipo_ordem": "Compra",
                             "categoria_ordem": "Fantasma", "preco_entrada": preco,
                             "data_hora": datetime.now().isoformat(), "status": "Aberta"
                         })
+                        # SALVANDO O ID DO FANTASMA PARA PODER FECHAR DEPOIS
+                        if res and 'id' in res:
+                            ordens_fantasma[uid].append({
+                                "id": res['id'], "entrada": preco, "alvo": preco * 1.005, "stop": preco * 0.99
+                            })
                     else:
-                        print(f"   ⏳ [{uid}] IGNORANDO: RSI ({rsi:.2f}) muito acima da meta ({limite_rsi}). Mercado esticado.")
+                        print(f"   ⏳ [{uid}] IGNORANDO: RSI ({rsi:.2f}) acima da meta ({limite_rsi}).")
 
-                # 5. Acompanha Fantasmas (Apenas RAM)
+                # 5. Acompanha Fantasmas (Atualizando a Base44)
                 for f in ordens_fantasma[uid][:]:
+                    # Se bater +0.5% (Lucro Fantasma)
                     if preco >= f['alvo']:
                         historico_hora[uid]['fantasma_vitorias'] += 1
+                        lucro_pct = ((preco - f['entrada']) / f['entrada']) * 100
+                        print(f"   🏁 [{uid}] FANTASMA FECHADO COM LUCRO: {lucro_pct:.2f}%")
+                        # Atualiza o banco para Fechada e grava o Lucro
+                        api_base44("PUT", ENDPOINTS["operacao"], {
+                            "preco_saida": preco, "lucro_porcentagem": lucro_pct, "status": "Fechada"
+                        }, id_registro=f['id'])
                         ordens_fantasma[uid].remove(f)
+                    
+                    # Se bater -1.0% (Prejuízo Fantasma)
                     elif preco <= f['stop']:
                         historico_hora[uid]['fantasma_derrotas'] += 1
+                        lucro_pct = ((preco - f['entrada']) / f['entrada']) * 100
+                        print(f"   🏁 [{uid}] FANTASMA FECHADO COM PREJUÍZO: {lucro_pct:.2f}%")
+                        # Atualiza o banco para Fechada e grava o Lucro
+                        api_base44("PUT", ENDPOINTS["operacao"], {
+                            "preco_saida": preco, "lucro_porcentagem": lucro_pct, "status": "Fechada"
+                        }, id_registro=f['id'])
                         ordens_fantasma[uid].remove(f)
 
             time.sleep(60)
