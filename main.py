@@ -36,24 +36,32 @@ def api_base44(metodo, endpoint, dados=None, id_registro=None):
         return None
     except: return None
 
-def atualizar_progresso_diario(usuario, lucro_operacao_pct):
-    """Atualiza o lucro acumulado no dia e o saldo total[cite: 2, 6]"""
-    # 1. Atualiza Saldo Demo[cite: 2]
+def atualizar_dashboard_total(usuario, lucro_operacao_pct):
+    """Atualiza o saldo total e o progresso da meta diária no painel"""
+    uid = usuario['usuario_id']
+    
+    # 1. Atualiza Saldo na Conta Demo[cite: 2]
     saldos = api_base44("GET", ENDPOINTS["saldo"])
     if saldos:
-        reg_saldo = next((s for s in saldos if s['usuario_id'] == usuario['usuario_id']), None)
+        reg_saldo = next((s for s in saldos if s['usuario_id'] == uid), None)
         if reg_saldo:
-            novo_saldo = float(reg_saldo.get('saldo_demo', 0)) + (100 * (lucro_operacao_pct/100))
+            valor_financeiro = 100 * (lucro_operacao_pct / 100) # Simulando banca de 100 USDT
+            novo_saldo = float(reg_saldo.get('saldo_demo', 0)) + valor_financeiro
             api_base44("PUT", ENDPOINTS["saldo"], {"saldo_demo": novo_saldo}, id_registro=reg_saldo['id'])
 
-    # 2. Atualiza Lucro Hoje no Controle
-    lucro_atual = float(usuario.get("lucro_hoje_porcentagem") or 0)
+    # 2. Atualiza o Progresso da Meta Diária (%) no Dashboard
+    lucro_acumulado_atual = float(usuario.get("lucro_hoje_porcentagem") or 0.0)
+    novo_acumulado = lucro_acumulado_atual + lucro_operacao_pct
+    
     api_base44("PUT", ENDPOINTS["controle"], {
-        "lucro_hoje_porcentagem": lucro_atual + lucro_operacao_pct
+        "lucro_hoje_porcentagem": novo_acumulado,
+        "lucro_hoje": 100 * (novo_acumulado / 100) # Lucro financeiro hoje
     }, id_registro=usuario['id'])
+    
+    print(f"📊 Dashboard Atualizado: Progresso do dia em {novo_acumulado:.2f}%")
 
 def iniciar_loop():
-    print("🚀 MIRAQUANTIA ONLINE - GESTÃO DE METAS ATIVA")
+    print("🚀 MIRAQUANTIA ONLINE - ATUALIZAÇÃO DE DASHBOARD ATIVA")
     while True:
         try:
             configs = api_base44("GET", ENDPOINTS["controle"])
@@ -66,27 +74,15 @@ def iniciar_loop():
                 uid = user.get("usuario_id")
                 if not user.get("status_bot"): continue
                 
-                # Verificação de Metas Diárias
+                # Respeita Meta Diária[cite: 6]
                 meta = float(user.get("meta_diaria_porcentagem") or 2.0)
-                stop = float(user.get("risco_maximo_porcentagem") or 1.0)
                 lucro_hoje = float(user.get("lucro_hoje_porcentagem") or 0.0)
+                if lucro_hoje >= meta: continue
 
-                if lucro_hoje >= meta:
-                    print(f"✅ {uid} atingiu a meta do dia ({lucro_hoje:.2f}%). Aguardando amanhã.")
-                    continue
-                if lucro_hoje <= -stop:
-                    print(f"🛑 {uid} atingiu o limite de risco ({lucro_hoje:.2f}%). Robô pausado por segurança.")
-                    continue
-
-                # Verificação de Ordem Aberta[cite: 3]
-                todas_ops = api_base44("GET", ENDPOINTS["operacao"])
-                tem_aberta = any(o for o in todas_ops if o['usuario_id'] == uid and o['status'] == 'Aberta' and o['categoria_ordem'] != 'Fantasma')
-                
-                if not tem_aberta:
-                    rsi_alvo = user.get("rsi_alvo_compra", 40)
-                    # Simulação de gatilho para manter o fluxo constante até a meta
+                # Lógica de Operação
+                if uid not in operacoes_memoria:
+                    # Gatilho de teste (RSI baixo)
                     if preco < 100000: 
-                        print(f"💰 Operando para atingir meta diária de {meta}% em {uid}")
                         res = api_base44("POST", ENDPOINTS["operacao"], {
                             "usuario_id": uid, "par_moeda": SYMBOL, "tipo_ordem": "Compra",
                             "categoria_ordem": "Demo", "preco_entrada": preco,
@@ -98,13 +94,15 @@ def iniciar_loop():
                     op = operacoes_memoria[uid]
                     lucro_pct = ((preco - op["entrada"]) / op["entrada"]) * 100
                     
-                    # Alvos curtos para atingir a meta em várias operações[cite: 3]
-                    if lucro_pct >= 0.5 or lucro_pct <= -0.5:
+                    # Alvo de 0.30% para ver o gráfico mexer
+                    if lucro_pct >= 0.3 or lucro_pct <= -0.5:
                         api_base44("PUT", ENDPOINTS["operacao"], {
                             "preco_saida": preco, "lucro_porcentagem": lucro_pct,
                             "status": "Fechada"
                         }, id_registro=op["id"])
-                        atualizar_progresso_diario(user, lucro_pct)
+                        
+                        # CHAMA A ATUALIZAÇÃO DO DASHBOARD AQUI
+                        atualizar_dashboard_total(user, lucro_pct)
                         del operacoes_memoria[uid]
 
             time.sleep(60)
