@@ -29,7 +29,7 @@ operacoes_abertas = {}
 ordens_fantasma = {}
 historico_hora = {}
 ultima_reuniao_ia = {}
-data_operacao_usuario = {} # <-- NOVA MEMÓRIA PARA O RESET DE MEIA-NOITE
+data_operacao_usuario = {}
 
 # ==========================================
 # 2. FUNÇÕES DE APOIO E BASE44
@@ -45,10 +45,22 @@ def api_base44(metodo, endpoint, dados=None, id_registro=None):
         return None
     except: return None
 
-def calcular_rsi_real(exchange):
+def ler_mercado(exchange):
+    """Lê as velas, calcula o RSI e mede a Volatilidade dos últimos 15 min"""
     try:
         velas = exchange.fetch_ohlcv(SYMBOL, timeframe='1m', limit=15)
         fechamentos = [v[4] for v in velas]
+        maximas = [v[2] for v in velas]
+        minimas = [v[3] for v in velas]
+
+        preco_atual = fechamentos[-1]
+        
+        # Cálculo de Volatilidade %
+        max_high = max(maximas)
+        min_low = min(minimas)
+        volatilidade = ((max_high - min_low) / min_low) * 100
+
+        # Cálculo de RSI
         ganhos, perdas = [], []
         for i in range(1, len(fechamentos)):
             diff = fechamentos[i] - fechamentos[i-1]
@@ -56,9 +68,12 @@ def calcular_rsi_real(exchange):
             else: perdas.append(abs(diff))
         media_ganhos = sum(ganhos) / 14 if ganhos else 0
         media_perdas = sum(perdas) / 14 if perdas else 0
-        if media_perdas == 0: return 100
-        return 100 - (100 / (1 + (media_ganhos / media_perdas)))
-    except: return 50
+        rsi = 100 if media_perdas == 0 else 100 - (100 / (1 + (media_ganhos / media_perdas)))
+        
+        return preco_atual, rsi, volatilidade
+    except Exception as e:
+        print(f"Erro na leitura do mercado: {e}")
+        return None, None, None
 
 def atualizar_dashboard_total(usuario, lucro_operacao_pct):
     uid = usuario['usuario_id']
@@ -79,19 +94,21 @@ def atualizar_dashboard_total(usuario, lucro_operacao_pct):
 # ==========================================
 # 3. O CÉREBRO: IA GESTORA DE RISCO
 # ==========================================
-def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual):
+def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual, volatilidade, marcha):
     uid = usuario.get("usuario_id")
     id_banco = usuario.get("id") 
     rsi_antigo = usuario.get("rsi_alvo_compra", 40)
     hist = historico_hora[uid]
     
-    print(f"\n🧠 [DIRETORIA DE RISCO IA] Analisando mercado para {uid}...")
+    print(f"\n🧠 [DIRETORIA DE RISCO] Analisando mercado para {uid}...")
     prompt = f"""
     Ativo: {SYMBOL}. Preço: {preco_atual:.2f}. RSI: {rsi_atual:.2f}. Alvo Antigo: {rsi_antigo}.
+    Volatilidade: {volatilidade:.2f}% (Mercado em Marcha {marcha})
     Vitórias Reais: {hist['reais_vitorias']} | Derrotas: {hist['reais_derrotas']}
     Vitórias Fantasmas: {hist['fantasma_vitorias']} | Derrotas: {hist['fantasma_derrotas']}
     
-    Avalie a volatilidade e ajuste o RSI de entrada e o Trailing Stop. 
+    TAREFA: Ajuste o RSI de entrada e o Trailing Stop. O mercado está na marcha {marcha}.
+    Se Volatilidade for alta, exija um 'gatilho_trailing' maior (ex: 1.0) e uma 'distancia_trailing' mais larga (ex: 0.5) para não ser ejetado cedo.
     Responda APENAS um JSON válido:
     {{"rsi_alvo_compra": 40, "gatilho_trailing": 0.6, "distancia_trailing": 0.3, "observacao_ia": "Motivo..."}}
     """
@@ -109,7 +126,7 @@ def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual):
 # 4. O OPERÁRIO: LOOP PRINCIPAL
 # ==========================================
 def iniciar_loop():
-    print("🚀 MIRAQUANTIA PRO - RESET DIÁRIO E GESTÃO DE RISCO ATIVADOS")
+    print("🚀 MIRAQUANTIA PRO - FREQUÊNCIA CARDÍACA DE MERCADO ATIVADA")
     global ultima_reuniao_ia, ordens_fantasma, historico_hora, operacoes_abertas, data_operacao_usuario
     
     while True:
@@ -118,18 +135,32 @@ def iniciar_loop():
             if not configs: time.sleep(60); continue
 
             ex = ccxt.bybit()
-            preco = ex.fetch_ticker(SYMBOL)['last']
-            rsi = calcular_rsi_real(ex)
+            preco, rsi, volatilidade = ler_mercado(ex)
+            
+            if preco is None:
+                time.sleep(60); continue
+
+            # DEFINIÇÃO DA MARCHA E TEMPO DE ESPERA DA IA
+            if volatilidade < 0.5:
+                tempo_espera_ia = 3600 # 60 minutos
+                marcha = "LENTA"
+            elif volatilidade <= 1.5:
+                tempo_espera_ia = 1800 # 30 minutos
+                marcha = "NORMAL"
+            else:
+                tempo_espera_ia = 900  # 15 minutos
+                marcha = "TURBO"
+
             hora_atual = datetime.now().strftime('%H:%M:%S')
             hoje_data = datetime.now().strftime('%Y-%m-%d')
             
-            print(f"[{hora_atual}] 📊 MERCADO | Preço: {preco} | RSI: {rsi:.2f}")
+            print(f"[{hora_atual}] 📊 MERCADO | Preço: {preco} | RSI: {rsi:.2f} | Volatilidade: {volatilidade:.2f}% (Marcha {marcha})")
 
             for user in configs:
                 uid = user.get("usuario_id")
                 modo = str(user.get("modo_operacao", "Demo")).capitalize()
                 meta = float(user.get("meta_diaria_porcentagem") or 2.0)
-                limite_perda = float(user.get("risco_maximo_porcentagem") or 10.0) # Lê os 10% da sua tela[cite: 6]
+                limite_perda = float(user.get("risco_maximo_porcentagem") or 10.0)
                 lucro_hoje = float(user.get("lucro_hoje_porcentagem") or 0.0)
 
                 if not user.get("status_bot"): continue
@@ -140,7 +171,7 @@ def iniciar_loop():
                 if uid not in historico_hora: historico_hora[uid] = {"reais_vitorias": 0, "reais_derrotas": 0, "fantasma_vitorias": 0, "fantasma_derrotas": 0}
                 if uid not in data_operacao_usuario: data_operacao_usuario[uid] = hoje_data
 
-                # RESET DA MEIA-NOITE (VIRADA DE DIA)
+                # RESET DA MEIA-NOITE
                 if data_operacao_usuario[uid] != hoje_data:
                     print(f"🌅 Novo dia detectado para {uid}! Zerando metas no Dashboard...")
                     api_base44("PUT", ENDPOINTS["controle"], {"lucro_hoje_porcentagem": 0.0, "lucro_hoje": 0.0}, id_registro=user['id'])
@@ -149,23 +180,22 @@ def iniciar_loop():
 
                 # 1. TRAVAS DE SEGURANÇA DIÁRIA
                 if lucro_hoje >= meta:
-                    print(f"   🎉 [{uid}] META BATIDA: Robô descansando. Retorna amanhã. ({lucro_hoje:.2f}% de {meta}%)")
+                    print(f"   🎉 [{uid}] META BATIDA: Robô descansando. ({lucro_hoje:.2f}% de {meta}%)")
                     continue
                 if lucro_hoje <= -limite_perda:
-                    print(f"   🛑 [{uid}] STOP DIÁRIO: Limite de perda atingido. Robô desligado por segurança. ({lucro_hoje:.2f}% de -{limite_perda}%)")
+                    print(f"   🛑 [{uid}] STOP DIÁRIO: Limite de perda atingido. ({lucro_hoje:.2f}% de -{limite_perda}%)")
                     continue
 
-                # Parâmetros Dinâmicos da IA
                 limite_rsi = float(user.get("rsi_alvo_compra", 40))
                 gatilho_ts = float(user.get("gatilho_trailing", 0.6))
                 distancia_ts = float(user.get("distancia_trailing", 0.3))
 
-                # 2. Reunião com IA (Aqui são 1500s = 25min. Mude para 3600 se quiser 1h)
-                if time.time() - ultima_reuniao_ia[uid] > 1500:
-                    reuniao_com_ia_gestora(user, preco, rsi)
+                # 2. REUNIÃO DINÂMICA COM A IA
+                if time.time() - ultima_reuniao_ia[uid] > tempo_espera_ia:
+                    reuniao_com_ia_gestora(user, preco, rsi, volatilidade, marcha)
                     ultima_reuniao_ia[uid] = time.time()
 
-                # 3. Gestão de Ordens Abertas (TRAILING STOP)
+                # 3. GESTÃO DE ORDENS ABERTAS (TRAILING STOP)
                 if uid in operacoes_abertas:
                     op = operacoes_abertas[uid]
                     lucro_pct = ((preco - op["entrada"]) / op["entrada"]) * 100
@@ -186,7 +216,7 @@ def iniciar_loop():
                         if lucro_pct <= linha_de_venda:
                             vender = True; motivo_venda = "Trailing Executado"
                     else:
-                        print(f"   👁️ [{uid}] Vigiando... Atual: {lucro_pct:.2f}%")
+                        print(f"   👁️ [{uid}] Vigiando... Atual: {lucro_pct:.2f}% | Gatilho em: {gatilho_ts}%")
                         if lucro_pct <= -1.0:
                             vender = True; motivo_venda = "Stop Loss de Proteção"
 
@@ -198,7 +228,7 @@ def iniciar_loop():
                         else: historico_hora[uid]['reais_derrotas'] += 1
                         del operacoes_abertas[uid]
 
-                # 4. Procura Novas Entradas
+                # 4. PROCURA NOVAS ENTRADAS
                 else:
                     if rsi <= limite_rsi:
                         print(f"   ⚡ [{uid}] COMPRA! RSI: {rsi:.2f}. Modo {modo}.")
@@ -216,7 +246,7 @@ def iniciar_loop():
                         if res and 'id' in res:
                             ordens_fantasma[uid].append({"id": res['id'], "entrada": preco, "alvo": preco * (1 + (gatilho_ts/100)), "stop": preco * 0.99})
 
-                # 5. Acompanha Fantasmas
+                # 5. ACOMPANHA FANTASMAS
                 for f in ordens_fantasma[uid][:]:
                     if preco >= f['alvo']:
                         historico_hora[uid]['fantasma_vitorias'] += 1
