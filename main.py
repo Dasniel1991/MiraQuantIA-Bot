@@ -46,7 +46,6 @@ def api_base44(metodo, endpoint, dados=None, id_registro=None):
     except: return None
 
 def obter_medo_e_ganancia():
-    """Busca o Índice Global de Sentimento do Mercado"""
     try:
         res = requests.get("https://api.alternative.me/fng/?limit=1", timeout=5)
         dados = res.json()
@@ -57,9 +56,7 @@ def obter_medo_e_ganancia():
         return "Neutro"
 
 def ler_mercado(exchange):
-    """Lê todas as métricas institucionais do ativo"""
     try:
-        # 1. Micro-Tendência (15m) e Volatilidade
         velas = exchange.fetch_ohlcv(SYMBOL, timeframe='1m', limit=15)
         fechamentos = [v[4] for v in velas]
         maximas = [v[2] for v in velas]
@@ -68,7 +65,6 @@ def ler_mercado(exchange):
         
         volatilidade = ((max(maximas) - min(minimas)) / min(minimas)) * 100
 
-        # 2. RSI Curto
         ganhos, perdas = [], []
         for i in range(1, len(fechamentos)):
             diff = fechamentos[i] - fechamentos[i-1]
@@ -78,7 +74,6 @@ def ler_mercado(exchange):
         media_perdas = sum(perdas) / 14 if perdas else 0
         rsi = 100 if media_perdas == 0 else 100 - (100 / (1 + (media_ganhos / media_perdas)))
         
-        # 3. Raio-X do Livro de Ofertas
         try:
             order_book = exchange.fetch_order_book(SYMBOL, limit=100)
             compras_m = sum(bid[0] * bid[1] for bid in order_book['bids']) / 1_000_000
@@ -86,7 +81,6 @@ def ler_mercado(exchange):
             raio_x_book = f"${compras_m:.2f}M Compras vs ${vendas_m:.2f}M Vendas"
         except: raio_x_book = "Indisponível"
 
-        # 4. Macro-Tendência (Média 200 Horas)
         try:
             velas_1h = exchange.fetch_ohlcv(SYMBOL, timeframe='1h', limit=200)
             fechamentos_1h = [v[4] for v in velas_1h]
@@ -94,10 +88,9 @@ def ler_mercado(exchange):
             tendencia_macro = "ALTA" if preco_atual > media_200 else "BAIXA"
         except: tendencia_macro = "Indisponível"
 
-        # 5. Funding Rate (Alavancagem do Varejo)
         try:
             funding = exchange.fetch_funding_rate(SYMBOL)
-            taxa_funding = funding['fundingRate'] * 100 # Em %
+            taxa_funding = funding['fundingRate'] * 100 
         except: taxa_funding = 0.0
             
         return preco_atual, rsi, volatilidade, raio_x_book, tendencia_macro, taxa_funding
@@ -105,20 +98,19 @@ def ler_mercado(exchange):
         print(f"Erro na leitura do mercado: {e}")
         return None, None, None, None, None, None
 
-def atualizar_dashboard_total(usuario, lucro_operacao_pct):
+def atualizar_dashboard_total(usuario, lucro_operacao_pct, valor_financeiro):
     uid = usuario['usuario_id']
     saldos = api_base44("GET", ENDPOINTS["saldo"])
     if saldos:
         reg_saldo = next((s for s in saldos if s['usuario_id'] == uid), None)
         if reg_saldo:
-            valor_financeiro = 100 * (lucro_operacao_pct / 100)
             novo_saldo = float(reg_saldo.get('saldo_demo', 0)) + valor_financeiro
             api_base44("PUT", ENDPOINTS["saldo"], {"saldo_demo": novo_saldo}, id_registro=reg_saldo['id'])
 
     lucro_acumulado = float(usuario.get("lucro_hoje_porcentagem") or 0.0) + lucro_operacao_pct
     api_base44("PUT", ENDPOINTS["controle"], {
         "lucro_hoje_porcentagem": lucro_acumulado,
-        "lucro_hoje": 100 * (lucro_acumulado / 100)
+        "lucro_hoje": 100 * (lucro_acumulado / 100) # Baseado em 100% como referência do gráfico
     }, id_registro=usuario['id'])
 
 # ==========================================
@@ -132,33 +124,37 @@ def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual, volatilidade, marcha
     
     print(f"\n🧠 [REUNIÃO DE DIRETORIA] IA Analisando Dados Institucionais para {uid}...")
     prompt = f"""
-    Ativo: {SYMBOL}. Preço: {preco_atual:.2f}. RSI: {rsi_atual:.2f}. Alvo de Compra Antigo: {rsi_antigo}.
+    Ativo: {SYMBOL}. Preço: {preco_atual:.2f}. RSI: {rsi_atual:.2f}. Alvo Antigo: {rsi_antigo}.
     
-    DADOS INSTITUCIONAIS GLOBAIS:
-    1. Volatilidade e Marcha: {volatilidade:.2f}% (Marcha {marcha})
-    2. Bússola Macro (EMA 200): O mercado está em tendência de {tendencia_macro}.
-    3. Order Book (Baleias): {raio_x_book}.
-    4. Alavancagem Varejo (Funding Rate): {taxa_funding:.4f}% (Positivo = Varejo apostando na alta; Negativo = Apostando na baixa).
-    5. Sentimento Global (Fear & Greed): {indice_medo}.
+    DADOS INSTITUCIONAIS:
+    1. Volatilidade: {volatilidade:.2f}% (Marcha {marcha})
+    2. EMA 200: Tendência de {tendencia_macro}.
+    3. Order Book: {raio_x_book}.
+    4. Funding Rate: {taxa_funding:.4f}%.
+    5. Sentimento Global: {indice_medo}.
     
-    PLACAR DO ROBÔ (Último ciclo):
-    Reais - Vitórias: {hist['reais_vitorias']} | Derrotas: {hist['reais_derrotas']}
-    Fantasmas - Vitórias: {hist['fantasma_vitorias']} | Derrotas: {hist['fantasma_derrotas']}
+    PLACAR DO ROBÔ:
+    Vitórias: {hist['reais_vitorias']} | Derrotas: {hist['reais_derrotas']}
     
-    TAREFA: Seja o Diretor de Risco do fundo de investimentos.
-    - Se a tendência macro for BAIXA e o Funding for POSITIVO, é perigoso comprar (Risco de liquidação). Diminua drasticamente o 'rsi_alvo_compra'.
-    - Se houver pânico (Medo) e uma enorme parede de compras no Order Book, aumente o 'rsi_alvo_compra' e prepare-se para surfar a alta ajustando o Trailing Stop ('gatilho_trailing' e 'distancia_trailing').
+    TAREFA: Como Diretor de Risco Sniper:
+    - Se o mercado estiver perigoso, exija um RSI minúsculo (ex: 20) para o robô não operar, e mude o status para Perigo.
+    - Se estiver promissor, ajuste a entrada e o Trailing Stop.
     
-    Responda APENAS um JSON válido:
-    {{"rsi_alvo_compra": 40, "gatilho_trailing": 0.6, "distancia_trailing": 0.3, "observacao_ia": "Sua tese de investimento..."}}
+    Responda APENAS um JSON válido no formato:
+    {{
+      "rsi_alvo_compra": 35, 
+      "gatilho_trailing": 0.8, 
+      "distancia_trailing": 0.4, 
+      "status_mercado": "🟡 Aguardando Correção Segura",
+      "observacao_ia": "Sua tese..."
+    }}
     """
     try:
         res = cliente_ia.models.generate_content(model=MODELO_GEMINI, contents=prompt)
         nova_regra = json.loads(res.text.replace("```json", "").replace("```", "").strip())
         
         api_base44("PUT", ENDPOINTS["controle"], nova_regra, id_registro=id_banco)
-        print(f"✅ [NOVA DIRETRIZ] RSI: {nova_regra['rsi_alvo_compra']} | Trailing: {nova_regra['gatilho_trailing']}% (-{nova_regra['distancia_trailing']}%)")
-        print(f"📝 Tese da IA: {nova_regra['observacao_ia']}\n")
+        print(f"✅ [NOVA DIRETRIZ] RSI: {nova_regra['rsi_alvo_compra']} | Status: {nova_regra['status_mercado']}")
         historico_hora[uid] = {"reais_vitorias": 0, "reais_derrotas": 0, "fantasma_vitorias": 0, "fantasma_derrotas": 0}
     except Exception as e: print(f"❌ [ERRO IA]: {e}")
 
@@ -166,21 +162,21 @@ def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual, volatilidade, marcha
 # 4. O OPERÁRIO: LOOP PRINCIPAL
 # ==========================================
 def iniciar_loop():
-    print("🚀 MIRAQUANTIA PRO MAX - ALGORITMO INSTITUCIONAL ATIVADO")
+    print("🚀 MIRAQUANTIA SNIPER - MÃO PESADA E STATUS DE MERCADO ATIVADOS")
     global ultima_reuniao_ia, ordens_fantasma, historico_hora, operacoes_abertas, data_operacao_usuario
     
-    # Busca o sentimento global fora do loop para não sobrecarregar a API
     indice_medo = obter_medo_e_ganancia()
     ultimo_update_medo = time.time()
     
     while True:
         try:
-            # Atualiza o índice de medo global a cada 6 horas
             if time.time() - ultimo_update_medo > 21600:
                 indice_medo = obter_medo_e_ganancia()
                 ultimo_update_medo = time.time()
 
             configs = api_base44("GET", ENDPOINTS["controle"])
+            saldos = api_base44("GET", ENDPOINTS["saldo"]) # Puxa saldos globais
+            
             if not configs: time.sleep(60); continue
 
             ex = ccxt.bybit()
@@ -199,8 +195,7 @@ def iniciar_loop():
             hora_atual = datetime.now().strftime('%H:%M:%S')
             hoje_data = datetime.now().strftime('%Y-%m-%d')
             
-            print(f"\n[{hora_atual}] 📊 MERCADO: Preço ${preco} | RSI: {rsi:.2f} | Volatilidade: {volatilidade:.2f}%")
-            print(f"   🏛️ INSTITUCIONAL: Macro em {tendencia_macro} | Sentimento: {indice_medo} | Book: {raio_x_book} | Funding: {taxa_funding:.4f}%")
+            print(f"\n[{hora_atual}] 📊 MERCADO: Preço ${preco} | RSI: {rsi:.2f}")
 
             for user in configs:
                 uid = user.get("usuario_id")
@@ -211,23 +206,25 @@ def iniciar_loop():
 
                 if not user.get("status_bot"): continue
                 
+                # Resgata o saldo exato do usuário para a Mão Pesada
+                reg_saldo = next((s for s in saldos if s['usuario_id'] == uid), None) if saldos else None
+                saldo_demo_atual = float(reg_saldo.get('saldo_demo', 100)) if reg_saldo else 100.0
+                
+                # Se não houver 'capital_por_operacao' definido, o Sniper usa o saldo TODO (Juros Compostos)
+                capital_operacao = float(user.get("capital_por_operacao") or saldo_demo_atual)
+
                 if uid not in ultima_reuniao_ia: ultima_reuniao_ia[uid] = 0
                 if uid not in ordens_fantasma: ordens_fantasma[uid] = []
                 if uid not in historico_hora: historico_hora[uid] = {"reais_vitorias": 0, "reais_derrotas": 0, "fantasma_vitorias": 0, "fantasma_derrotas": 0}
                 if uid not in data_operacao_usuario: data_operacao_usuario[uid] = hoje_data
 
                 if data_operacao_usuario[uid] != hoje_data:
-                    print(f"🌅 Novo dia detectado para {uid}! Zerando metas no Dashboard...")
                     api_base44("PUT", ENDPOINTS["controle"], {"lucro_hoje_porcentagem": 0.0, "lucro_hoje": 0.0}, id_registro=user['id'])
                     data_operacao_usuario[uid] = hoje_data
                     lucro_hoje = 0.0
 
-                if lucro_hoje >= meta:
-                    print(f"   🎉 [{uid}] META BATIDA ({lucro_hoje:.2f}% de {meta}%). Descansando.")
-                    continue
-                if lucro_hoje <= -limite_perda:
-                    print(f"   🛑 [{uid}] STOP DIÁRIO ATINGIDO ({lucro_hoje:.2f}%). Segurança ativada.")
-                    continue
+                if lucro_hoje >= meta: continue
+                if lucro_hoje <= -limite_perda: continue
 
                 limite_rsi = float(user.get("rsi_alvo_compra", 40))
                 gatilho_ts = float(user.get("gatilho_trailing", 0.6))
@@ -238,47 +235,58 @@ def iniciar_loop():
                     reuniao_com_ia_gestora(user, preco, rsi, volatilidade, marcha, raio_x_book, tendencia_macro, taxa_funding, indice_medo)
                     ultima_reuniao_ia[uid] = time.time()
 
-                # GESTÃO DE ORDENS ABERTAS (TRAILING STOP)
+                # GESTÃO DE ORDENS ABERTAS (TRAILING STOP + MÃO PESADA)
                 if uid in operacoes_abertas:
                     op = operacoes_abertas[uid]
                     lucro_pct = ((preco - op["entrada"]) / op["entrada"]) * 100
                     
-                    if lucro_pct > op["lucro_maximo"]:
-                        op["lucro_maximo"] = lucro_pct
+                    if lucro_pct > op["lucro_maximo"]: op["lucro_maximo"] = lucro_pct
 
                     vender = False; motivo_venda = ""
 
                     if lucro_pct >= gatilho_ts and not op["trailing_ativo"]:
                         op["trailing_ativo"] = True
-                        print(f"   🛡️ [{uid}] TRAILING STOP ATIVADO! (Gatilho em {gatilho_ts}%). Surfando a alta...")
+                        print(f"   🛡️ [{uid}] TRAILING ATIVADO! Garantindo o lucro do atirador...")
 
                     if op["trailing_ativo"]:
                         linha_de_venda = op["lucro_maximo"] - distancia_ts
-                        print(f"   🏄‍♂️ [{uid}] Atual: {lucro_pct:.2f}% | Topo: {op['lucro_maximo']:.2f}% | Stop em: {linha_de_venda:.2f}%")
+                        print(f"   🏄‍♂️ [{uid}] Lucro Atual: {lucro_pct:.2f}% | Stop Seguro: {linha_de_venda:.2f}%")
                         if lucro_pct <= linha_de_venda:
                             vender = True; motivo_venda = "Trailing Executado"
                     else:
-                        print(f"   👁️ [{uid}] Vigiando... Atual: {lucro_pct:.2f}% | Gatilho em: {gatilho_ts}%")
+                        print(f"   👁️ [{uid}] Vigiando... Lucro: {lucro_pct:.2f}%")
                         if lucro_pct <= -1.0:
                             vender = True; motivo_venda = "Stop Loss de Proteção"
 
                     if vender:
-                        print(f"   💰 [{uid}] FECHANDO ORDEM ({motivo_venda})! Lucro: {lucro_pct:.2f}%")
-                        api_base44("PUT", ENDPOINTS["operacao"], {"preco_saida": preco, "lucro_porcentagem": lucro_pct, "status": "Fechada"}, id_registro=op["id"])
-                        atualizar_dashboard_total(user, lucro_pct)
+                        # Cálculo Real do Dinheiro (Mão Pesada)
+                        lucro_financeiro = op["capital_alocado"] * (lucro_pct / 100)
+                        print(f"   💰 [{uid}] FECHANDO ORDEM ({motivo_venda})! Lucro: {lucro_pct:.2f}% (${lucro_financeiro:.2f})")
+                        
+                        api_base44("PUT", ENDPOINTS["operacao"], {
+                            "preco_saida": preco, "lucro_porcentagem": lucro_pct, 
+                            "lucro_financeiro": lucro_financeiro, "status": "Fechada"
+                        }, id_registro=op["id"])
+                        
+                        atualizar_dashboard_total(user, lucro_pct, lucro_financeiro)
+                        
                         if lucro_pct > 0: historico_hora[uid]['reais_vitorias'] += 1
                         else: historico_hora[uid]['reais_derrotas'] += 1
                         del operacoes_abertas[uid]
 
-                # PROCURA NOVAS ENTRADAS
+                # PROCURA NOVAS ENTRADAS (MODO SNIPER)
                 else:
                     if rsi <= limite_rsi:
-                        print(f"   ⚡ [{uid}] COMPRA! RSI: {rsi:.2f}. Modo {modo}.")
+                        print(f"   🎯 [{uid}] TIRO DE SNIPER! RSI ({rsi:.2f}) atingiu o alvo crítico. Alocando ${capital_operacao:.2f}")
                         res = api_base44("POST", ENDPOINTS["operacao"], {
                             "usuario_id": uid, "par_moeda": SYMBOL, "tipo_ordem": "Compra",
                             "categoria_ordem": modo, "preco_entrada": preco, "data_hora": datetime.now().isoformat(), "status": "Aberta"
                         })
-                        if res and 'id' in res: operacoes_abertas[uid] = {"id": res['id'], "entrada": preco, "lucro_maximo": 0.0, "trailing_ativo": False}
+                        if res and 'id' in res: 
+                            operacoes_abertas[uid] = {
+                                "id": res['id'], "entrada": preco, "lucro_maximo": 0.0, 
+                                "trailing_ativo": False, "capital_alocado": capital_operacao # Gravou o tamanho da mão!
+                            }
 
                     elif rsi <= (limite_rsi + 15):
                         res = api_base44("POST", ENDPOINTS["operacao"], {
@@ -293,14 +301,12 @@ def iniciar_loop():
                     if preco >= f['alvo']:
                         historico_hora[uid]['fantasma_vitorias'] += 1
                         lucro_pct = ((preco - f['entrada']) / f['entrada']) * 100
-                        print(f"   🏁 [{uid}] FANTASMA VITÓRIA: {lucro_pct:.2f}%")
                         api_base44("PUT", ENDPOINTS["operacao"], {"preco_saida": preco, "lucro_porcentagem": lucro_pct, "status": "Fechada"}, id_registro=f['id'])
                         ordens_fantasma[uid].remove(f)
                     
                     elif preco <= f['stop']:
                         historico_hora[uid]['fantasma_derrotas'] += 1
                         lucro_pct = ((preco - f['entrada']) / f['entrada']) * 100
-                        print(f"   🏁 [{uid}] FANTASMA PREJUÍZO: {lucro_pct:.2f}%")
                         api_base44("PUT", ENDPOINTS["operacao"], {"preco_saida": preco, "lucro_porcentagem": lucro_pct, "status": "Fechada"}, id_registro=f['id'])
                         ordens_fantasma[uid].remove(f)
 
