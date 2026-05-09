@@ -22,10 +22,10 @@ ENDPOINTS = {
     "saldo": f"{BASE_URL}/entities/SaldoUsuario"
 }
 
-# 🚀 AGORA O ROBÔ VIGIA MÚLTIPLAS MOEDAS AO MESMO TEMPO
+# 🚀 ROBÔ MULTIMOEDAS
 MOEDAS_ATIVAS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']
 
-# Memória do Robô (Agora organizada por Usuário + Moeda)
+# Memória do Robô
 operacoes_abertas = {} 
 ordens_fantasma = {}
 historico_hora = {}
@@ -58,7 +58,6 @@ def obter_medo_e_ganancia():
 
 def obter_radar_baleias(symbol="BTCUSDT"):
     try:
-        # Remove a barra para a API da Binance (ex: BTC/USDT -> BTCUSDT)
         simbolo_binance = symbol.replace("/", "")
         url = f"https://fapi.binance.com/futures/data/topLongShortAccountRatio?symbol={simbolo_binance}&period=5m"
         res = requests.get(url, timeout=5)
@@ -131,7 +130,7 @@ def atualizar_dashboard_total(usuario, lucro_operacao_pct, valor_financeiro):
     }, id_registro=usuario['id'])
 
 def recuperar_memoria_encravada():
-    print("🔍 Procurando por ordens abertas na base de dados...")
+    print("🔍 Procurando por ordens abertas na base de dados para recuperar memória...")
     todas_ops = api_base44("GET", ENDPOINTS["operacao"])
     if todas_ops:
         for op in todas_ops:
@@ -140,8 +139,11 @@ def recuperar_memoria_encravada():
                 symbol = op.get("par_moeda", "BTC/USDT")
                 mem_key = f"{uid}_{symbol}"
                 cat = op.get("categoria_ordem", "Demo")
-                preco_ent = float(op.get("preco_entrada", 0))
+                
+                # CORREÇÃO: Evita erro de float caso o valor venha nulo da Base44
+                preco_ent = float(op.get("preco_entrada") or 0)
                 if preco_ent == 0: continue
+                
                 tipo = op.get("tipo_ordem", "Compra")
 
                 if cat == "Fantasma":
@@ -154,9 +156,10 @@ def recuperar_memoria_encravada():
                     })
                 else:
                     if mem_key not in operacoes_abertas:
+                        # CORREÇÃO: Define o capital base padrão de forma segura
                         operacoes_abertas[mem_key] = {
                             "id": op['id'], "entrada": preco_ent, "lucro_maximo": 0.0, 
-                            "trailing_ativo": False, "capital_alocado": float(op.get("lucro_financeiro", 100.0)), "tipo_ordem": tipo
+                            "trailing_ativo": False, "capital_alocado": 100.0, "tipo_ordem": tipo
                         }
         print("✅ Memória restaurada com sucesso!")
 
@@ -241,7 +244,6 @@ def iniciar_loop():
             dados_mercado = {}
             radar_baleias_dados = {}
             
-            # 1. Coleta dados de TODAS as moedas ativas primeiro
             hora_atual = datetime.now().strftime('%H:%M:%S')
             hoje_data = datetime.now().strftime('%Y-%m-%d')
             print(f"\n[{hora_atual}] 🔭 ESCANEANDO O MERCADO...")
@@ -253,7 +255,6 @@ def iniciar_loop():
                     radar_baleias_dados[symbol] = obter_radar_baleias(symbol)
                     print(f"   ► {symbol} | Preço: ${p:.2f} | RSI: {r:.2f} | Volatilidade: {v:.2f}%")
 
-            # 2. Processa cada usuário
             for user in configs:
                 uid = user.get("usuario_id")
                 modo = str(user.get("modo_operacao", "Demo")).capitalize()
@@ -263,7 +264,6 @@ def iniciar_loop():
 
                 if not user.get("status_bot"): continue
                 
-                # RESET DA MEIA NOITE
                 if uid not in data_operacao_usuario: data_operacao_usuario[uid] = hoje_data
                 if data_operacao_usuario[uid] != hoje_data:
                     api_base44("PUT", ENDPOINTS["controle"], {"lucro_hoje_porcentagem": 0.0, "lucro_hoje": 0.0}, id_registro=user['id'])
@@ -273,22 +273,18 @@ def iniciar_loop():
                 if lucro_hoje >= meta: continue
                 if lucro_hoje <= -limite_perda: continue
 
-                # GESTÃO DO COFRE: Calcula Saldo Livre para não dar erro de margem
                 reg_saldo = next((s for s in saldos if s['usuario_id'] == uid), None) if saldos else None
                 saldo_demo_total = float(reg_saldo.get('saldo_demo', 100)) if reg_saldo else 100.0
                 
-                # Soma capital preso em todas as moedas deste usuário
                 capital_preso = sum(op["capital_alocado"] for k, op in operacoes_abertas.items() if k.startswith(f"{uid}_"))
                 saldo_livre = saldo_demo_total - capital_preso
                 
-                # Se não configurou capital fixo, usa 30% do saldo livre por moeda (para conseguir entrar em várias)
                 capital_operacao_base = float(user.get("capital_por_operacao") or 0)
                 if capital_operacao_base == 0:
                     capital_operacao = saldo_livre * 0.30 
                 else:
                     capital_operacao = capital_operacao_base
 
-                # 3. Varre as moedas
                 for symbol in MOEDAS_ATIVAS:
                     if symbol not in dados_mercado: continue
                     preco, rsi, volatilidade, raio_x_book, tendencia_macro, taxa_funding = dados_mercado[symbol]
@@ -310,18 +306,15 @@ def iniciar_loop():
                     distancia_ts = float(user.get("distancia_trailing", 0.2))
                     stop_loss_rigido = -0.35
 
-                    # REUNIÃO INDIVIDUAL POR MOEDA
                     if time.time() - ultima_reuniao_ia[mem_key] > tempo_espera_ia:
                         reuniao_com_ia_gestora(user, symbol, preco, rsi, volatilidade, marcha, raio_x_book, tendencia_macro, taxa_funding, indice_medo, radar_baleias)
                         ultima_reuniao_ia[mem_key] = time.time()
                         
-                        # Recarrega regras que a IA acabou de mudar
                         configs_atualizadas = api_base44("GET", ENDPOINTS["controle"])
                         user = next((u for u in configs_atualizadas if u['usuario_id'] == uid), user)
                         direcao = user.get("direcao_operacao", "Compra")
                         limite_rsi = float(user.get("rsi_alvo", user.get("rsi_alvo_compra", 40)))
 
-                    # GESTÃO DE ORDENS ABERTAS (REAL/DEMO)
                     if mem_key in operacoes_abertas:
                         op = operacoes_abertas[mem_key]
                         
@@ -354,12 +347,11 @@ def iniciar_loop():
                             else: historico_hora[mem_key]['reais_derrotas'] += 1
                             del operacoes_abertas[mem_key]
 
-                    # PROCURA NOVAS ENTRADAS (SE TIVER SALDO LIVRE)
                     else:
                         sinal_compra = (direcao == "Compra" and rsi <= limite_rsi)
                         sinal_venda = (direcao == "Venda" and rsi >= limite_rsi)
 
-                        if (sinal_compra or sinal_venda) and capital_operacao > 10: # Mínimo de 10 dólares pra operar
+                        if (sinal_compra or sinal_venda) and capital_operacao > 10:
                             print(f"   🎯 [{symbol}] SINAL DE {direcao.upper()}! Alocando ${capital_operacao:.2f}")
                             res = api_base44("POST", ENDPOINTS["operacao"], {
                                 "usuario_id": uid, "par_moeda": symbol, "tipo_ordem": direcao,
@@ -371,7 +363,6 @@ def iniciar_loop():
                                     "trailing_ativo": False, "capital_alocado": capital_operacao, "tipo_ordem": direcao
                                 }
 
-                        # FANTASMAS (Sempre podem rodar, não custam saldo real)
                         elif ((direcao == "Compra" and rsi <= (limite_rsi + 15)) or (direcao == "Venda" and rsi >= (limite_rsi - 15))) and len(ordens_fantasma[mem_key]) < 2:
                             res = api_base44("POST", ENDPOINTS["operacao"], {
                                 "usuario_id": uid, "par_moeda": symbol, "tipo_ordem": direcao,
@@ -385,7 +376,6 @@ def iniciar_loop():
                                     "tipo_ordem": direcao, "hora_criacao": time.time(), "capital_alocado": 100.0
                                 })
 
-                    # ACOMPANHA FANTASMAS E FECHA-AS
                     for f in ordens_fantasma[mem_key][:]:
                         bateu_alvo = (f["tipo_ordem"] == "Compra" and preco >= f["alvo"]) or (f["tipo_ordem"] == "Venda" and preco <= f["alvo"])
                         bateu_stop = (f["tipo_ordem"] == "Compra" and preco <= f["stop"]) or (f["tipo_ordem"] == "Venda" and preco >= f["stop"])
@@ -405,7 +395,7 @@ def iniciar_loop():
                             }, id_registro=f['id'])
                             ordens_fantasma[mem_key].remove(f)
 
-            time.sleep(45) # Loop um pouco mais rápido agora
+            time.sleep(45)
         except Exception as e: print(f"Erro Crítico: {e}"); time.sleep(60)
 
 if __name__ == "__main__":
