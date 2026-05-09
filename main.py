@@ -174,7 +174,7 @@ def iniciar_loop():
     indice_medo = obter_medo_e_ganancia()
     ultimo_update_medo = time.time()
     
-    teste_forcar_venda = False  # <--- TRAVA DO TESTE AQUI
+    teste_forcar_venda = False  # Trava do teste
     
     while True:
         try:
@@ -203,6 +203,10 @@ def iniciar_loop():
                     "data_hora": datetime.now().isoformat(), "status": "Aberta"
                 })
                 if res_teste and 'id' in res_teste:
+                    # CORREÇÃO: Cria a memória do usuário se ela ainda não existir
+                    if test_user_id not in ordens_fantasma:
+                        ordens_fantasma[test_user_id] = []
+                    
                     ordens_fantasma[test_user_id].append({
                         "id": res_teste['id'], "entrada": preco, 
                         "alvo": preco * 0.996, "stop": preco * 1.0035, "tipo_ordem": "Venda"
