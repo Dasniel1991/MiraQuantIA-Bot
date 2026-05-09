@@ -125,7 +125,7 @@ def atualizar_dashboard_total(usuario, lucro_operacao_pct, valor_financeiro):
         if reg_saldo:
             novo_saldo = float(reg_saldo.get('saldo_demo', 0)) + valor_financeiro
             api_base44("PUT", ENDPOINTS["saldo"], {"saldo_demo": novo_saldo}, id_registro=reg_saldo['id'])
-            print(f"💰 Saldo Atualizado! +{valor_financeiro:.4f} USDT adicionados ao cofre.")
+            print(f"💰 Saldo Atualizado! {'+' if valor_financeiro >= 0 else ''}{valor_financeiro:.4f} USDT ajustados.")
 
     lucro_acumulado = float(usuario.get("lucro_hoje_porcentagem") or 0.0) + lucro_operacao_pct
     api_base44("PUT", ENDPOINTS["controle"], {
@@ -195,14 +195,18 @@ def reuniao_com_ia_gestora(usuario, symbol, preco_atual, rsi_atual, volatilidade
         nova_regra["rsi_alvo_compra"] = nova_regra["rsi_alvo"] 
         api_base44("PUT", ENDPOINTS["controle"], nova_regra, id_registro=id_banco)
         historico_hora[mem_key] = {"reais_vitorias": 0, "reais_derrotas": 0, "fantasma_vitorias": 0, "fantasma_derrotas": 0}
+        print(f"✅ [NOVA DIRETRIZ {symbol}] Direção: {nova_regra['direcao_operacao']} | Alvo: {nova_regra['rsi_alvo']}")
     except Exception as e:
-        print(f"❌ Erro na IA ({symbol}): {e}")
+        if "429" in str(e) or "quota" in str(e).lower():
+            print(f"⏳ [IA {symbol}] API Gratuita em tempo de espera. Mantendo a estratégia atual.")
+        else:
+            print(f"❌ Erro na IA ({symbol}): {e}")
 
 # ==========================================
 # 4. O OPERÁRIO: LOOP TURBO (10 SEGUNDOS)
 # ==========================================
 def iniciar_loop():
-    print("🚀 MIRAQUANTIA SCALPER - MODO TURBO (ATUALIZAÇÃO 10s)")
+    print("🚀 MIRAQUANTIA SCALPER - MODO TURBO (ATUALIZAÇÃO 10s) COM PROTEÇÃO DE API")
     global ultima_reuniao_ia, ordens_fantasma, historico_hora, operacoes_abertas, data_operacao_usuario
     
     indice_medo = obter_medo_e_ganancia()
@@ -222,7 +226,6 @@ def iniciar_loop():
             if not configs: 
                 time.sleep(10); continue
 
-            # Captura a lista de ordens fechadas para sabermos se o chefe fechou alguma manualmente
             ops_fechadas_db = [op['id'] for op in todas_ops_db if op.get("status") == "Fechada"] if todas_ops_db else []
             ex = ccxt.bybit()
             dados_mercado = {}
@@ -269,33 +272,28 @@ def iniciar_loop():
                     preco, rsi, volatilidade, raio_x_book, tendencia_macro, taxa_funding = dados_mercado[symbol]
                     mem_key = f"{uid}_{symbol}"
                     
-                    if mem_key not in ultima_reuniao_ia: ultima_reuniao_ia[mem_key] = 0
+                    # Definição inicial do tempo da IA para não triggar todas ao mesmo tempo na primeira rodada
+                    if mem_key not in ultima_reuniao_ia: 
+                        offset_moeda = MOEDAS_ATIVAS.index(symbol) * 60 # Espaça 1 minuto entre cada moeda na inicialização
+                        ultima_reuniao_ia[mem_key] = time.time() - 1800 + offset_moeda
+                        
                     if mem_key not in ordens_fantasma: ordens_fantasma[mem_key] = []
                     if mem_key not in historico_hora: historico_hora[mem_key] = {"reais_vitorias": 0, "reais_derrotas": 0, "fantasma_vitorias": 0, "fantasma_derrotas": 0}
 
-                    # -------------------------------------------------------------
-                    # GESTÃO LIVE (AO VIVO) & CORREÇÃO DA INTERVENÇÃO HUMANA
-                    # -------------------------------------------------------------
+                    # GESTÃO LIVE & INTERVENÇÃO HUMANA
                     if mem_key in operacoes_abertas:
                         op = operacoes_abertas[mem_key]
                         
-                        # VERIFICAÇÃO SE O DASNIEL CLICOU EM "FECHAR" NO PAINEL
                         if op["id"] in ops_fechadas_db:
                             print(f"   🧑‍💻 [{symbol}] INTERVENÇÃO HUMANA DETETADA! Fechada pelo Dashboard.")
-                            # 1. Procurar o registo exato na Base44 para apanhar o lucro que ficou registado
                             ordem_db = next((x for x in todas_ops_db if x['id'] == op['id']), None)
                             if ordem_db:
                                 lucro_pct_final = float(ordem_db.get("lucro_porcentagem", 0))
                                 lucro_fin_final = float(ordem_db.get("lucro_financeiro", 0))
-                                
-                                # 2. SOMAR O LUCRO AO SALDO TOTAL E PROGRESSO
                                 atualizar_dashboard_total(user, lucro_pct_final, lucro_fin_final)
-                                
-                                # 3. Atualizar o placar
                                 if lucro_pct_final > 0: historico_hora[mem_key]['reais_vitorias'] += 1
                                 else: historico_hora[mem_key]['reais_derrotas'] += 1
                                 
-                            # 4. Apagar da memória do robô para ele seguir a vida
                             del operacoes_abertas[mem_key]
                             continue
                         
@@ -303,10 +301,8 @@ def iniciar_loop():
                         if lucro_pct > op["lucro_maximo"]: op["lucro_maximo"] = lucro_pct
                         lucro_fin = op["capital_alocado"] * (lucro_pct / 100)
 
-                        # ATUALIZAÇÃO RELÂMPAGO NA BASE44 PARA O ECRÃ DO DASNIEL
                         api_base44("PUT", ENDPOINTS["operacao"], {"preco_saida": preco, "lucro_porcentagem": lucro_pct, "lucro_financeiro": lucro_fin}, id_registro=op["id"])
 
-                        # REGRAS DE FECHAMENTO DO ROBÔ (TRAILING E STOP)
                         vender = False
                         if lucro_pct >= float(user.get("gatilho_trailing", 0.4)) and not op["trailing_ativo"]: op["trailing_ativo"] = True
                         
@@ -328,16 +324,16 @@ def iniciar_loop():
                             res = api_base44("POST", ENDPOINTS["operacao"], {"usuario_id": uid, "par_moeda": symbol, "tipo_ordem": direcao, "categoria_ordem": modo, "preco_entrada": preco, "data_hora": datetime.now().isoformat(), "status": "Aberta"})
                             if res and 'id' in res: operacoes_abertas[mem_key] = {"id": res['id'], "entrada": preco, "lucro_maximo": 0.0, "trailing_ativo": False, "capital_alocado": capital_op, "tipo_ordem": direcao}
 
-                    # REUNIÃO IA (Frequência dinâmica)
+                    # REUNIÃO IA
                     freq_ia = 900 if volatilidade > 1.5 else 1800
                     if time.time() - ultima_reuniao_ia[mem_key] > freq_ia:
                         reuniao_com_ia_gestora(user, symbol, preco, rsi, volatilidade, "TURBO", raio_x_book, tendencia_macro, taxa_funding, indice_medo, radar_baleias_dados[symbol])
                         ultima_reuniao_ia[mem_key] = time.time()
+                        time.sleep(3) # 🛡️ Pausa tática para a API do Google não nos bloquear por spam
 
-            time.sleep(10) # ⚡️ 10 SEGUNDOS
+            time.sleep(10)
             
         except Exception as e:
-            # 🚨 AGORA O ROBÔ GRITA SE DER ERRO EM VEZ DE SE ESCONDER
             print(f"⚠️ ERRO CRÍTICO NO LOOP: {e}")
             traceback.print_exc()
             time.sleep(10)
