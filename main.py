@@ -36,6 +36,17 @@ data_operacao_usuario = {}
 # ==========================================
 # 2. FUNÇÕES DE APOIO E LEITURA DE MERCADO
 # ==========================================
+def is_fim_de_semana():
+    """Detecta se estamos no modo de baixa liquidez (Sexta > 20h, Sábado ou Domingo)"""
+    agora = datetime.now()
+    dia_semana = agora.weekday() # 0=Segunda, 4=Sexta, 5=Sábado, 6=Domingo
+    hora = agora.hour
+    if dia_semana == 5 or dia_semana == 6:
+        return True
+    if dia_semana == 4 and hora >= 20:
+        return True
+    return False
+
 def api_base44(metodo, endpoint, dados=None, id_registro=None):
     headers = {"Content-Type": "application/json", "api_key": BASE44_API_KEY}
     url = f"{endpoint}/{id_registro}" if id_registro else endpoint
@@ -159,7 +170,8 @@ def recuperar_memoria_encravada():
                     if mem_key not in operacoes_abertas:
                         operacoes_abertas[mem_key] = {
                             "id": op['id'], "entrada": preco_ent, "lucro_maximo": 0.0, 
-                            "trailing_ativo": False, "capital_alocado": float(op.get("capital_alocado", 100.0)), "tipo_ordem": tipo
+                            "trailing_ativo": False, "capital_alocado": float(op.get("capital_alocado", 100.0)), "tipo_ordem": tipo,
+                            "hora_criacao": time.time() # Inicia o cronômetro para as recuperadas
                         }
         print("✅ Memória restaurada com sucesso!")
 
@@ -203,10 +215,10 @@ def reuniao_com_ia_gestora(usuario, symbol, preco_atual, rsi_atual, volatilidade
             print(f"❌ Erro na IA ({symbol}): {e}")
 
 # ==========================================
-# 4. O OPERÁRIO: LOOP TURBO (10 SEGUNDOS)
+# 4. O OPERÁRIO: LOOP TURBO COM TIME-DECAY E FDS
 # ==========================================
 def iniciar_loop():
-    print("🚀 MIRAQUANTIA SCALPER - MODO TURBO (ATUALIZAÇÃO 10s) COM PROTEÇÃO DE API")
+    print("🚀 MIRAQUANTIA SCALPER - GESTÃO DINÂMICA (TIME-DECAY & FDS) ATIVADA")
     global ultima_reuniao_ia, ordens_fantasma, historico_hora, operacoes_abertas, data_operacao_usuario
     
     indice_medo = obter_medo_e_ganancia()
@@ -233,14 +245,19 @@ def iniciar_loop():
             
             hoje_data = datetime.now().strftime('%Y-%m-%d')
             hora_atual = datetime.now().strftime('%H:%M:%S')
-            print(f"\n[{hora_atual}] 🔭 ESCANEANDO O MERCADO...")
+            fds_ativo = is_fim_de_semana()
+            
+            if fds_ativo:
+                print(f"\n[{hora_atual}] 🔭 ESCANEANDO O MERCADO... [MODO FIM DE SEMANA ATIVO]")
+            else:
+                print(f"\n[{hora_atual}] 🔭 ESCANEANDO O MERCADO...")
             
             for symbol in MOEDAS_ATIVAS:
                 p, r, v, rb, tm, tf = ler_mercado(ex, symbol)
                 if p is not None:
                     dados_mercado[symbol] = (p, r, v, rb, tm, tf)
                     radar_baleias_dados[symbol] = obter_radar_baleias(symbol)
-                    print(f"   ► {symbol} | Preço: ${p:.2f} | RSI: {r:.2f}")
+                    print(f"   ► {symbol} | Preço: ${p:.2f} | RSI: {r:.2f} | Volatilidade: {v:.2f}%")
 
             for user in configs:
                 uid = user.get("usuario_id")
@@ -272,15 +289,14 @@ def iniciar_loop():
                     preco, rsi, volatilidade, raio_x_book, tendencia_macro, taxa_funding = dados_mercado[symbol]
                     mem_key = f"{uid}_{symbol}"
                     
-                    # Definição inicial do tempo da IA para não triggar todas ao mesmo tempo na primeira rodada
                     if mem_key not in ultima_reuniao_ia: 
-                        offset_moeda = MOEDAS_ATIVAS.index(symbol) * 60 # Espaça 1 minuto entre cada moeda na inicialização
+                        offset_moeda = MOEDAS_ATIVAS.index(symbol) * 60
                         ultima_reuniao_ia[mem_key] = time.time() - 1800 + offset_moeda
                         
                     if mem_key not in ordens_fantasma: ordens_fantasma[mem_key] = []
                     if mem_key not in historico_hora: historico_hora[mem_key] = {"reais_vitorias": 0, "reais_derrotas": 0, "fantasma_vitorias": 0, "fantasma_derrotas": 0}
 
-                    # GESTÃO LIVE & INTERVENÇÃO HUMANA
+                    # GESTÃO LIVE & TIME-DECAY
                     if mem_key in operacoes_abertas:
                         op = operacoes_abertas[mem_key]
                         
@@ -303,15 +319,47 @@ def iniciar_loop():
 
                         api_base44("PUT", ENDPOINTS["operacao"], {"preco_saida": preco, "lucro_porcentagem": lucro_pct, "lucro_financeiro": lucro_fin}, id_registro=op["id"])
 
+                        # AVALIAÇÃO DE TEMPO (CRONÔMETRO) E VOLATILIDADE
+                        tempo_aberta = time.time() - op.get("hora_criacao", time.time())
+                        if volatilidade < 0.5: tempo_limite_fuga = 900  # 15 minutos (Mercado Lento)
+                        elif volatilidade <= 1.5: tempo_limite_fuga = 600 # 10 minutos (Normal)
+                        else: tempo_limite_fuga = 420 # 7 minutos (Turbo)
+
+                        modo_fuga = False
+                        if tempo_aberta > tempo_limite_fuga:
+                            modo_fuga = True
+
+                        # CONFIGURAÇÕES DE GATILHO E DISTÂNCIA BASE E FIM DE SEMANA
+                        if fds_ativo:
+                            gatilho_ts = 0.15
+                            distancia_ts = 0.05
+                        else:
+                            gatilho_ts = float(user.get("gatilho_trailing", 0.4))
+                            distancia_ts = float(user.get("distancia_trailing", 0.2))
+
                         vender = False
-                        if lucro_pct >= float(user.get("gatilho_trailing", 0.4)) and not op["trailing_ativo"]: op["trailing_ativo"] = True
+                        motivo_venda = ""
+
+                        # LÓGICA DE FUGA: Se enrolou demais e deu um respiro de 0.05%, corta!
+                        if modo_fuga and lucro_pct >= 0.05:
+                            vender = True
+                            motivo_venda = f"Fuga por Tempo Esgotado (+0.05%)"
+
+                        # LÓGICA NORMAL DO TRAILING STOP E STOP LOSS
+                        elif lucro_pct >= gatilho_ts and not op["trailing_ativo"]: 
+                            op["trailing_ativo"] = True
+                            print(f"   🛡️ [{symbol}] TRAILING ATIVADO! Garantindo o lucro...")
                         
-                        if op["trailing_ativo"]:
-                            if lucro_pct <= (op["lucro_maximo"] - float(user.get("distancia_trailing", 0.2))): vender = True
-                        elif lucro_pct <= -0.35: vender = True
+                        if not vender and op["trailing_ativo"]:
+                            if lucro_pct <= (op["lucro_maximo"] - distancia_ts): 
+                                vender = True
+                                motivo_venda = "Trailing Executado"
+                        elif not vender and lucro_pct <= -0.35: 
+                            vender = True
+                            motivo_venda = "Stop Loss de Proteção"
 
                         if vender:
-                            print(f"   🤖 [{symbol}] FECHADO PELO ROBÔ | Lucro: {lucro_pct:.2f}%")
+                            print(f"   🤖 [{symbol}] FECHADO PELO ROBÔ: {motivo_venda} | Lucro: {lucro_pct:.2f}%")
                             api_base44("PUT", ENDPOINTS["operacao"], {"preco_saida": preco, "lucro_porcentagem": lucro_pct, "lucro_financeiro": lucro_fin, "status": "Fechada"}, id_registro=op["id"])
                             atualizar_dashboard_total(user, lucro_pct, lucro_fin)
                             del operacoes_abertas[mem_key]
@@ -322,14 +370,14 @@ def iniciar_loop():
                         limite_rsi = float(user.get("rsi_alvo", 40))
                         if (direcao == "Compra" and rsi <= limite_rsi) or (direcao == "Venda" and rsi >= limite_rsi):
                             res = api_base44("POST", ENDPOINTS["operacao"], {"usuario_id": uid, "par_moeda": symbol, "tipo_ordem": direcao, "categoria_ordem": modo, "preco_entrada": preco, "data_hora": datetime.now().isoformat(), "status": "Aberta"})
-                            if res and 'id' in res: operacoes_abertas[mem_key] = {"id": res['id'], "entrada": preco, "lucro_maximo": 0.0, "trailing_ativo": False, "capital_alocado": capital_op, "tipo_ordem": direcao}
+                            if res and 'id' in res: operacoes_abertas[mem_key] = {"id": res['id'], "entrada": preco, "lucro_maximo": 0.0, "trailing_ativo": False, "capital_alocado": capital_op, "tipo_ordem": direcao, "hora_criacao": time.time()}
 
                     # REUNIÃO IA
                     freq_ia = 900 if volatilidade > 1.5 else 1800
                     if time.time() - ultima_reuniao_ia[mem_key] > freq_ia:
                         reuniao_com_ia_gestora(user, symbol, preco, rsi, volatilidade, "TURBO", raio_x_book, tendencia_macro, taxa_funding, indice_medo, radar_baleias_dados[symbol])
                         ultima_reuniao_ia[mem_key] = time.time()
-                        time.sleep(3) # 🛡️ Pausa tática para a API do Google não nos bloquear por spam
+                        time.sleep(3)
 
             time.sleep(10)
             
