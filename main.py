@@ -3,6 +3,7 @@ import time
 import requests
 import os
 import json
+import traceback
 from datetime import datetime
 from google import genai
 
@@ -39,12 +40,14 @@ def api_base44(metodo, endpoint, dados=None, id_registro=None):
     headers = {"Content-Type": "application/json", "api_key": BASE44_API_KEY}
     url = f"{endpoint}/{id_registro}" if id_registro else endpoint
     try:
-        if metodo == "GET": res = requests.get(url, headers=headers)
-        elif metodo == "POST": res = requests.post(url, json=dados, headers=headers)
-        elif metodo == "PUT": res = requests.put(url, json=dados, headers=headers)
+        if metodo == "GET": res = requests.get(url, headers=headers, timeout=10)
+        elif metodo == "POST": res = requests.post(url, json=dados, headers=headers, timeout=10)
+        elif metodo == "PUT": res = requests.put(url, json=dados, headers=headers, timeout=10)
         if res.status_code in [200, 201, 204]: return res.json() if res.text else True
         return None
-    except: return None
+    except Exception as e:
+        print(f"⚠️ Erro de comunicação com Base44 ({metodo}): {e}")
+        return None
 
 def obter_medo_e_ganancia():
     try:
@@ -68,7 +71,7 @@ def obter_radar_baleias(symbol="BTCUSDT"):
             shorts_pct = float(ultimo['shortAccount']) * 100
             return f"{longs_pct:.1f}% Comprados (Long) vs {shorts_pct:.1f}% Vendidos (Short)"
         return "Dados Indisponíveis"
-    except Exception as e:
+    except:
         return "Dados Indisponíveis"
 
 def ler_mercado(exchange, symbol):
@@ -111,6 +114,7 @@ def ler_mercado(exchange, symbol):
             
         return preco_atual, rsi, volatilidade, raio_x_book, tendencia_macro, taxa_funding
     except Exception as e:
+        print(f"Erro na leitura do mercado ({symbol}): {e}")
         return None, None, None, None, None, None
 
 def atualizar_dashboard_total(usuario, lucro_operacao_pct, valor_financeiro):
@@ -121,6 +125,7 @@ def atualizar_dashboard_total(usuario, lucro_operacao_pct, valor_financeiro):
         if reg_saldo:
             novo_saldo = float(reg_saldo.get('saldo_demo', 0)) + valor_financeiro
             api_base44("PUT", ENDPOINTS["saldo"], {"saldo_demo": novo_saldo}, id_registro=reg_saldo['id'])
+            print(f"💰 Saldo Atualizado! +{valor_financeiro:.4f} USDT adicionados ao cofre.")
 
     lucro_acumulado = float(usuario.get("lucro_hoje_porcentagem") or 0.0) + lucro_operacao_pct
     api_base44("PUT", ENDPOINTS["controle"], {
@@ -129,6 +134,7 @@ def atualizar_dashboard_total(usuario, lucro_operacao_pct, valor_financeiro):
     }, id_registro=usuario['id'])
 
 def recuperar_memoria_encravada():
+    print("🔍 Procurando por ordens abertas na base de dados para recuperar memória...")
     todas_ops = api_base44("GET", ENDPOINTS["operacao"])
     if todas_ops:
         for op in todas_ops:
@@ -153,8 +159,9 @@ def recuperar_memoria_encravada():
                     if mem_key not in operacoes_abertas:
                         operacoes_abertas[mem_key] = {
                             "id": op['id'], "entrada": preco_ent, "lucro_maximo": 0.0, 
-                            "trailing_ativo": False, "capital_alocado": 100.0, "tipo_ordem": tipo
+                            "trailing_ativo": False, "capital_alocado": float(op.get("capital_alocado", 100.0)), "tipo_ordem": tipo
                         }
+        print("✅ Memória restaurada com sucesso!")
 
 # ==========================================
 # 3. O CÉREBRO: IA + RADAR MULTIPAR
@@ -188,7 +195,8 @@ def reuniao_com_ia_gestora(usuario, symbol, preco_atual, rsi_atual, volatilidade
         nova_regra["rsi_alvo_compra"] = nova_regra["rsi_alvo"] 
         api_base44("PUT", ENDPOINTS["controle"], nova_regra, id_registro=id_banco)
         historico_hora[mem_key] = {"reais_vitorias": 0, "reais_derrotas": 0, "fantasma_vitorias": 0, "fantasma_derrotas": 0}
-    except: pass
+    except Exception as e:
+        print(f"❌ Erro na IA ({symbol}): {e}")
 
 # ==========================================
 # 4. O OPERÁRIO: LOOP TURBO (10 SEGUNDOS)
@@ -211,20 +219,25 @@ def iniciar_loop():
             saldos = api_base44("GET", ENDPOINTS["saldo"]) 
             todas_ops_db = api_base44("GET", ENDPOINTS["operacao"])
             
-            if not configs: time.sleep(10); continue
+            if not configs: 
+                time.sleep(10); continue
 
+            # Captura a lista de ordens fechadas para sabermos se o chefe fechou alguma manualmente
             ops_fechadas_db = [op['id'] for op in todas_ops_db if op.get("status") == "Fechada"] if todas_ops_db else []
             ex = ccxt.bybit()
             dados_mercado = {}
             radar_baleias_dados = {}
             
             hoje_data = datetime.now().strftime('%Y-%m-%d')
+            hora_atual = datetime.now().strftime('%H:%M:%S')
+            print(f"\n[{hora_atual}] 🔭 ESCANEANDO O MERCADO...")
             
             for symbol in MOEDAS_ATIVAS:
                 p, r, v, rb, tm, tf = ler_mercado(ex, symbol)
                 if p is not None:
                     dados_mercado[symbol] = (p, r, v, rb, tm, tf)
                     radar_baleias_dados[symbol] = obter_radar_baleias(symbol)
+                    print(f"   ► {symbol} | Preço: ${p:.2f} | RSI: {r:.2f}")
 
             for user in configs:
                 uid = user.get("usuario_id")
@@ -260,20 +273,40 @@ def iniciar_loop():
                     if mem_key not in ordens_fantasma: ordens_fantasma[mem_key] = []
                     if mem_key not in historico_hora: historico_hora[mem_key] = {"reais_vitorias": 0, "reais_derrotas": 0, "fantasma_vitorias": 0, "fantasma_derrotas": 0}
 
-                    # GESTÃO LIVE (AO VIVO)
+                    # -------------------------------------------------------------
+                    # GESTÃO LIVE (AO VIVO) & CORREÇÃO DA INTERVENÇÃO HUMANA
+                    # -------------------------------------------------------------
                     if mem_key in operacoes_abertas:
                         op = operacoes_abertas[mem_key]
+                        
+                        # VERIFICAÇÃO SE O DASNIEL CLICOU EM "FECHAR" NO PAINEL
                         if op["id"] in ops_fechadas_db:
-                            del operacoes_abertas[mem_key]; continue
+                            print(f"   🧑‍💻 [{symbol}] INTERVENÇÃO HUMANA DETETADA! Fechada pelo Dashboard.")
+                            # 1. Procurar o registo exato na Base44 para apanhar o lucro que ficou registado
+                            ordem_db = next((x for x in todas_ops_db if x['id'] == op['id']), None)
+                            if ordem_db:
+                                lucro_pct_final = float(ordem_db.get("lucro_porcentagem", 0))
+                                lucro_fin_final = float(ordem_db.get("lucro_financeiro", 0))
+                                
+                                # 2. SOMAR O LUCRO AO SALDO TOTAL E PROGRESSO
+                                atualizar_dashboard_total(user, lucro_pct_final, lucro_fin_final)
+                                
+                                # 3. Atualizar o placar
+                                if lucro_pct_final > 0: historico_hora[mem_key]['reais_vitorias'] += 1
+                                else: historico_hora[mem_key]['reais_derrotas'] += 1
+                                
+                            # 4. Apagar da memória do robô para ele seguir a vida
+                            del operacoes_abertas[mem_key]
+                            continue
                         
                         lucro_pct = ((preco - op["entrada"]) / op["entrada"]) * 100 if op["tipo_ordem"] == "Compra" else ((op["entrada"] - preco) / op["entrada"]) * 100
                         if lucro_pct > op["lucro_maximo"]: op["lucro_maximo"] = lucro_pct
                         lucro_fin = op["capital_alocado"] * (lucro_pct / 100)
 
-                        # ATUALIZAÇÃO RELÂMPAGO NA BASE44
+                        # ATUALIZAÇÃO RELÂMPAGO NA BASE44 PARA O ECRÃ DO DASNIEL
                         api_base44("PUT", ENDPOINTS["operacao"], {"preco_saida": preco, "lucro_porcentagem": lucro_pct, "lucro_financeiro": lucro_fin}, id_registro=op["id"])
 
-                        # REGRAS DE FECHAMENTO DO ROBÔ
+                        # REGRAS DE FECHAMENTO DO ROBÔ (TRAILING E STOP)
                         vender = False
                         if lucro_pct >= float(user.get("gatilho_trailing", 0.4)) and not op["trailing_ativo"]: op["trailing_ativo"] = True
                         
@@ -282,6 +315,7 @@ def iniciar_loop():
                         elif lucro_pct <= -0.35: vender = True
 
                         if vender:
+                            print(f"   🤖 [{symbol}] FECHADO PELO ROBÔ | Lucro: {lucro_pct:.2f}%")
                             api_base44("PUT", ENDPOINTS["operacao"], {"preco_saida": preco, "lucro_porcentagem": lucro_pct, "lucro_financeiro": lucro_fin, "status": "Fechada"}, id_registro=op["id"])
                             atualizar_dashboard_total(user, lucro_pct, lucro_fin)
                             del operacoes_abertas[mem_key]
@@ -300,8 +334,13 @@ def iniciar_loop():
                         reuniao_com_ia_gestora(user, symbol, preco, rsi, volatilidade, "TURBO", raio_x_book, tendencia_macro, taxa_funding, indice_medo, radar_baleias_dados[symbol])
                         ultima_reuniao_ia[mem_key] = time.time()
 
-            time.sleep(10) # ⚡️ O SEGREDO DO TEMPO REAL ESTÁ AQUI
-        except: time.sleep(10)
+            time.sleep(10) # ⚡️ 10 SEGUNDOS
+            
+        except Exception as e:
+            # 🚨 AGORA O ROBÔ GRITA SE DER ERRO EM VEZ DE SE ESCONDER
+            print(f"⚠️ ERRO CRÍTICO NO LOOP: {e}")
+            traceback.print_exc()
+            time.sleep(10)
 
 if __name__ == "__main__":
     iniciar_loop()
