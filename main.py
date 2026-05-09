@@ -174,6 +174,8 @@ def iniciar_loop():
     indice_medo = obter_medo_e_ganancia()
     ultimo_update_medo = time.time()
     
+    teste_forcar_venda = False  # <--- TRAVA DO TESTE AQUI
+    
     while True:
         try:
             if time.time() - ultimo_update_medo > 21600:
@@ -190,6 +192,24 @@ def iniciar_loop():
             
             if preco is None:
                 time.sleep(60); continue
+
+            # --- INÍCIO DO BLOCO DE TESTE ---
+            if not teste_forcar_venda:
+                print("🧪 [TESTE] Forçando Ordem Fantasma de VENDA para conferência visual...")
+                test_user_id = configs[0].get("usuario_id")
+                res_teste = api_base44("POST", ENDPOINTS["operacao"], {
+                    "usuario_id": test_user_id, "par_moeda": SYMBOL, "tipo_ordem": "Venda",
+                    "categoria_ordem": "Fantasma", "preco_entrada": preco, 
+                    "data_hora": datetime.now().isoformat(), "status": "Aberta"
+                })
+                if res_teste and 'id' in res_teste:
+                    ordens_fantasma[test_user_id].append({
+                        "id": res_teste['id'], "entrada": preco, 
+                        "alvo": preco * 0.996, "stop": preco * 1.0035, "tipo_ordem": "Venda"
+                    })
+                print("🧪 [TESTE] Ordem de Venda enviada! Verifique o Dashboard.")
+                teste_forcar_venda = True # Trava ativada para não enviar de novo
+            # --- FIM DO BLOCO DE TESTE ---
 
             if volatilidade < 0.5:
                 tempo_espera_ia = 3600; marcha = "LENTA"
@@ -294,7 +314,7 @@ def iniciar_loop():
                     if sinal_compra or sinal_venda:
                         print(f"   🎯 [{uid}] SINAL DE {direcao.upper()}! RSI ({rsi:.2f}) atingiu o alvo ({limite_rsi}). Alocando ${capital_operacao:.2f}")
                         res = api_base44("POST", ENDPOINTS["operacao"], {
-                            "usuario_id": uid, "par_moeda": SYMBOL, "tipo_ordem": direcao, # Agora pode ser Venda!
+                            "usuario_id": uid, "par_moeda": SYMBOL, "tipo_ordem": direcao,
                             "categoria_ordem": modo, "preco_entrada": preco, "data_hora": datetime.now().isoformat(), "status": "Aberta"
                         })
                         if res and 'id' in res: 
@@ -339,51 +359,3 @@ def iniciar_loop():
 
 if __name__ == "__main__":
     iniciar_loop()
-    # ==========================================
-# 4. O OPERÁRIO: LOOP PRINCIPAL
-# ==========================================
-def iniciar_loop():
-    print("🚀 MIRAQUANTIA SCALPER - LONG/SHORT E STOP CURTO ATIVADOS")
-    global ultima_reuniao_ia, ordens_fantasma, historico_hora, operacoes_abertas, data_operacao_usuario
-    
-    indice_medo = obter_medo_e_ganancia()
-    ultimo_update_medo = time.time()
-    
-    teste_forcar_venda = False  # <--- TRAVA DO TESTE CRIADA AQUI
-    
-    while True:
-        try:
-            if time.time() - ultimo_update_medo > 21600:
-                indice_medo = obter_medo_e_ganancia()
-                ultimo_update_medo = time.time()
-
-            configs = api_base44("GET", ENDPOINTS["controle"])
-            saldos = api_base44("GET", ENDPOINTS["saldo"]) 
-            
-            if not configs: time.sleep(60); continue
-
-            ex = ccxt.bybit()
-            preco, rsi, volatilidade, raio_x_book, tendencia_macro, taxa_funding = ler_mercado(ex)
-            
-            if preco is None:
-                time.sleep(60); continue
-
-            # --- INÍCIO DO BLOCO DE TESTE ---
-            if not teste_forcar_venda:
-                print("🧪 [TESTE] Forçando Ordem Fantasma de VENDA para conferência visual...")
-                test_user_id = configs[0].get("usuario_id")
-                res_teste = api_base44("POST", ENDPOINTS["operacao"], {
-                    "usuario_id": test_user_id, "par_moeda": SYMBOL, "tipo_ordem": "Venda",
-                    "categoria_ordem": "Fantasma", "preco_entrada": preco, 
-                    "data_hora": datetime.now().isoformat(), "status": "Aberta"
-                })
-                if res_teste and 'id' in res_teste:
-                    ordens_fantasma[test_user_id].append({
-                        "id": res_teste['id'], "entrada": preco, 
-                        "alvo": preco * 0.996, "stop": preco * 1.0035, "tipo_ordem": "Venda"
-                    })
-                print("🧪 [TESTE] Ordem de Venda enviada! Verifique o Dashboard.")
-                teste_forcar_venda = True # Trava ativada para não enviar de novo
-            # --- FIM DO BLOCO DE TESTE ---
-
-            # ... (aqui continua o resto do seu código normalmente) ...
