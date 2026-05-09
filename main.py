@@ -111,7 +111,6 @@ def ler_mercado(exchange, symbol):
             
         return preco_atual, rsi, volatilidade, raio_x_book, tendencia_macro, taxa_funding
     except Exception as e:
-        print(f"Erro na leitura do mercado ({symbol}): {e}")
         return None, None, None, None, None, None
 
 def atualizar_dashboard_total(usuario, lucro_operacao_pct, valor_financeiro):
@@ -130,7 +129,6 @@ def atualizar_dashboard_total(usuario, lucro_operacao_pct, valor_financeiro):
     }, id_registro=usuario['id'])
 
 def recuperar_memoria_encravada():
-    print("🔍 Procurando por ordens abertas na base de dados para recuperar memória...")
     todas_ops = api_base44("GET", ENDPOINTS["operacao"])
     if todas_ops:
         for op in todas_ops:
@@ -139,10 +137,8 @@ def recuperar_memoria_encravada():
                 symbol = op.get("par_moeda", "BTC/USDT")
                 mem_key = f"{uid}_{symbol}"
                 cat = op.get("categoria_ordem", "Demo")
-                
                 preco_ent = float(op.get("preco_entrada") or 0)
                 if preco_ent == 0: continue
-                
                 tipo = op.get("tipo_ordem", "Compra")
 
                 if cat == "Fantasma":
@@ -159,7 +155,6 @@ def recuperar_memoria_encravada():
                             "id": op['id'], "entrada": preco_ent, "lucro_maximo": 0.0, 
                             "trailing_ativo": False, "capital_alocado": 100.0, "tipo_ordem": tipo
                         }
-        print("✅ Memória restaurada com sucesso!")
 
 # ==========================================
 # 3. O CÉREBRO: IA + RADAR MULTIPAR
@@ -172,59 +167,38 @@ def reuniao_com_ia_gestora(usuario, symbol, preco_atual, rsi_atual, volatilidade
     direcao_antiga = usuario.get("direcao_operacao", "Compra")
     hist = historico_hora.get(mem_key, {"reais_vitorias": 0, "reais_derrotas": 0, "fantasma_vitorias": 0, "fantasma_derrotas": 0})
     
-    print(f"\n🧠 [REUNIÃO IA] Analisando {symbol}...")
     prompt = f"""
-    Ativo: {symbol}. Preço: {preco_atual:.2f}. RSI: {rsi_atual:.2f}. Direção Anterior: {direcao_antiga} | RSI Alvo: {rsi_antigo}.
-    
-    DADOS INSTITUCIONAIS:
-    1. Volatilidade: {volatilidade:.2f}% (Marcha {marcha})
-    2. EMA 200: Tendência de {tendencia_macro}.
-    3. Order Book: {raio_x_book}.
-    4. Funding Rate: {taxa_funding:.4f}%.
-    5. Sentimento Global: {indice_medo}.
-    6. RADAR DE BALEIAS: {radar_baleias}.
-    
-    PLACAR NESTA MOEDA:
-    Reais - Vitórias: {hist['reais_vitorias']} | Derrotas: {hist['reais_derrotas']}
-    Fantasmas - Vitórias: {hist['fantasma_vitorias']} | Derrotas: {hist['fantasma_derrotas']}
-    
-    TAREFA COMO DIRETOR DE RISCO:
-    - Escolha 'direcao_operacao' (Compra ou Venda) baseando-se na tendência e nas baleias.
-    - Defina o 'rsi_alvo'.
-    - INICIE O STATUS COM A MOEDA (Ex: "[{symbol}] 🟢 Seguindo tendência...").
-    - Siga a matemática dos Fantasmas se as Baleias estiverem blefando.
-    
-    Responda APENAS um JSON:
+    Ativo: {symbol}. Preço: {preco_atual:.2f}. RSI: {rsi_atual:.2f}.
+    Dados: Vol {volatilidade:.2f}% ({marcha}), Tendência {tendencia_macro}, {raio_x_book}, Baleias: {radar_baleias}.
+    Placar: Reais {hist['reais_vitorias']}/{hist['reais_derrotas']}, Fantasmas {hist['fantasma_vitorias']}/{hist['fantasma_derrotas']}.
+    Tarefa: Defina 'direcao_operacao' e 'rsi_alvo'. Use Fantasmas para validar Baleias.
+    Responda APENAS JSON:
     {{
       "direcao_operacao": "Compra",
       "rsi_alvo": 35, 
       "gatilho_trailing": 0.4, 
       "distancia_trailing": 0.2, 
-      "status_mercado": "[{symbol}] 🟢 Fantasmas confirmam...",
-      "observacao_ia": "Sua tese..."
+      "status_mercado": "[{symbol}] 🟢 Status...",
+      "observacao_ia": "Tese..."
     }}
     """
     try:
         res = cliente_ia.models.generate_content(model=MODELO_GEMINI, contents=prompt)
         nova_regra = json.loads(res.text.replace("```json", "").replace("```", "").strip())
-        
         nova_regra["rsi_alvo_compra"] = nova_regra["rsi_alvo"] 
         api_base44("PUT", ENDPOINTS["controle"], nova_regra, id_registro=id_banco)
-        print(f"✅ [NOVA DIRETRIZ {symbol}] Direção: {nova_regra['direcao_operacao']} | Alvo: {nova_regra['rsi_alvo']}")
-        
         historico_hora[mem_key] = {"reais_vitorias": 0, "reais_derrotas": 0, "fantasma_vitorias": 0, "fantasma_derrotas": 0}
-    except Exception as e: print(f"❌ [ERRO IA {symbol}]: {e}")
+    except: pass
 
 # ==========================================
-# 4. O OPERÁRIO: LOOP MULTIPAR
+# 4. O OPERÁRIO: LOOP TURBO (10 SEGUNDOS)
 # ==========================================
 def iniciar_loop():
-    print("🚀 MIRAQUANTIA SCALPER - ATUALIZAÇÃO AO VIVO E INTERVENÇÃO HUMANA ATIVADOS")
+    print("🚀 MIRAQUANTIA SCALPER - MODO TURBO (ATUALIZAÇÃO 10s)")
     global ultima_reuniao_ia, ordens_fantasma, historico_hora, operacoes_abertas, data_operacao_usuario
     
     indice_medo = obter_medo_e_ganancia()
     ultimo_update_medo = time.time()
-    
     recuperar_memoria_encravada()
     
     while True:
@@ -235,27 +209,22 @@ def iniciar_loop():
 
             configs = api_base44("GET", ENDPOINTS["controle"])
             saldos = api_base44("GET", ENDPOINTS["saldo"]) 
-            todas_ops_db = api_base44("GET", ENDPOINTS["operacao"]) # Puxa todas as ordens para checar Intervenção Humana
+            todas_ops_db = api_base44("GET", ENDPOINTS["operacao"])
             
-            if not configs: time.sleep(60); continue
+            if not configs: time.sleep(10); continue
 
-            # Cria lista rápida de IDs que já foram fechados na Base44 pelo Dasniel
             ops_fechadas_db = [op['id'] for op in todas_ops_db if op.get("status") == "Fechada"] if todas_ops_db else []
-
             ex = ccxt.bybit()
             dados_mercado = {}
             radar_baleias_dados = {}
             
-            hora_atual = datetime.now().strftime('%H:%M:%S')
             hoje_data = datetime.now().strftime('%Y-%m-%d')
-            print(f"\n[{hora_atual}] 🔭 ESCANEANDO O MERCADO...")
             
             for symbol in MOEDAS_ATIVAS:
                 p, r, v, rb, tm, tf = ler_mercado(ex, symbol)
                 if p is not None:
                     dados_mercado[symbol] = (p, r, v, rb, tm, tf)
                     radar_baleias_dados[symbol] = obter_radar_baleias(symbol)
-                    print(f"   ► {symbol} | Preço: ${p:.2f} | RSI: {r:.2f} | Volatilidade: {v:.2f}%")
 
             for user in configs:
                 uid = user.get("usuario_id")
@@ -266,159 +235,73 @@ def iniciar_loop():
 
                 if not user.get("status_bot"): continue
                 
+                # RESET DIÁRIO
                 if uid not in data_operacao_usuario: data_operacao_usuario[uid] = hoje_data
                 if data_operacao_usuario[uid] != hoje_data:
                     api_base44("PUT", ENDPOINTS["controle"], {"lucro_hoje_porcentagem": 0.0, "lucro_hoje": 0.0}, id_registro=user['id'])
                     data_operacao_usuario[uid] = hoje_data
                     lucro_hoje = 0.0
 
-                if lucro_hoje >= meta: continue
-                if lucro_hoje <= -limite_perda: continue
+                if lucro_hoje >= meta or lucro_hoje <= -limite_perda: continue
 
                 reg_saldo = next((s for s in saldos if s['usuario_id'] == uid), None) if saldos else None
-                saldo_demo_total = float(reg_saldo.get('saldo_demo', 100)) if reg_saldo else 100.0
-                
+                saldo_total = float(reg_saldo.get('saldo_demo', 100)) if reg_saldo else 100.0
                 capital_preso = sum(op["capital_alocado"] for k, op in operacoes_abertas.items() if k.startswith(f"{uid}_"))
-                saldo_livre = saldo_demo_total - capital_preso
+                saldo_livre = saldo_total - capital_preso
                 
-                capital_operacao_base = float(user.get("capital_por_operacao") or 0)
-                if capital_operacao_base == 0:
-                    capital_operacao = saldo_livre * 0.30 
-                else:
-                    capital_operacao = capital_operacao_base
+                capital_op = float(user.get("capital_por_operacao") or (saldo_livre * 0.30))
 
                 for symbol in MOEDAS_ATIVAS:
                     if symbol not in dados_mercado: continue
                     preco, rsi, volatilidade, raio_x_book, tendencia_macro, taxa_funding = dados_mercado[symbol]
-                    radar_baleias = radar_baleias_dados[symbol]
-                    
                     mem_key = f"{uid}_{symbol}"
                     
-                    if volatilidade < 0.5: tempo_espera_ia = 3600; marcha = "LENTA"
-                    elif volatilidade <= 1.5: tempo_espera_ia = 1800; marcha = "NORMAL"
-                    else: tempo_espera_ia = 900; marcha = "TURBO"
-
                     if mem_key not in ultima_reuniao_ia: ultima_reuniao_ia[mem_key] = 0
                     if mem_key not in ordens_fantasma: ordens_fantasma[mem_key] = []
                     if mem_key not in historico_hora: historico_hora[mem_key] = {"reais_vitorias": 0, "reais_derrotas": 0, "fantasma_vitorias": 0, "fantasma_derrotas": 0}
 
-                    direcao = user.get("direcao_operacao", "Compra")
-                    limite_rsi = float(user.get("rsi_alvo", user.get("rsi_alvo_compra", 40)))
-                    gatilho_ts = float(user.get("gatilho_trailing", 0.4))
-                    distancia_ts = float(user.get("distancia_trailing", 0.2))
-                    stop_loss_rigido = -0.35
-
-                    if time.time() - ultima_reuniao_ia[mem_key] > tempo_espera_ia:
-                        reuniao_com_ia_gestora(user, symbol, preco, rsi, volatilidade, marcha, raio_x_book, tendencia_macro, taxa_funding, indice_medo, radar_baleias)
-                        ultima_reuniao_ia[mem_key] = time.time()
-                        
-                        configs_atualizadas = api_base44("GET", ENDPOINTS["controle"])
-                        user = next((u for u in configs_atualizadas if u['usuario_id'] == uid), user)
-                        direcao = user.get("direcao_operacao", "Compra")
-                        limite_rsi = float(user.get("rsi_alvo", user.get("rsi_alvo_compra", 40)))
-
-                    # ---------------------------------------------------------
-                    # GESTÃO DE ORDENS ABERTAS COM INTERVENÇÃO HUMANA & AO VIVO
-                    # ---------------------------------------------------------
+                    # GESTÃO LIVE (AO VIVO)
                     if mem_key in operacoes_abertas:
                         op = operacoes_abertas[mem_key]
-                        
-                        # 🧑‍💻 VERIFICA SE O DASNIEL FECHOU MANUALMENTE
                         if op["id"] in ops_fechadas_db:
-                            print(f"   🧑‍💻 [{symbol}] INTERVENÇÃO HUMANA DETETADA! Ordem já foi fechada no painel.")
-                            del operacoes_abertas[mem_key]
-                            continue # Pula para a próxima moeda
+                            del operacoes_abertas[mem_key]; continue
                         
-                        # Calcula o lucro atual
                         lucro_pct = ((preco - op["entrada"]) / op["entrada"]) * 100 if op["tipo_ordem"] == "Compra" else ((op["entrada"] - preco) / op["entrada"]) * 100
                         if lucro_pct > op["lucro_maximo"]: op["lucro_maximo"] = lucro_pct
+                        lucro_fin = op["capital_alocado"] * (lucro_pct / 100)
 
-                        lucro_financeiro_atual = op["capital_alocado"] * (lucro_pct / 100)
+                        # ATUALIZAÇÃO RELÂMPAGO NA BASE44
+                        api_base44("PUT", ENDPOINTS["operacao"], {"preco_saida": preco, "lucro_porcentagem": lucro_pct, "lucro_financeiro": lucro_fin}, id_registro=op["id"])
 
-                        # 📡 TRANSMISSOR AO VIVO: Atualiza a Base44 com os números atuais enquanto a ordem está aberta
-                        api_base44("PUT", ENDPOINTS["operacao"], {
-                            "preco_saida": preco, 
-                            "lucro_porcentagem": lucro_pct, 
-                            "lucro_financeiro": lucro_financeiro_atual
-                            # NÃO envia "status" para não atrapalhar caso você queira fechar
-                        }, id_registro=op["id"])
-
-                        vender = False; motivo_venda = ""
-
-                        if lucro_pct >= gatilho_ts and not op["trailing_ativo"]:
-                            op["trailing_ativo"] = True
-                            print(f"   🛡️ [{symbol}] TRAILING ATIVADO! Garantindo o lucro...")
-
+                        # REGRAS DE FECHAMENTO DO ROBÔ
+                        vender = False
+                        if lucro_pct >= float(user.get("gatilho_trailing", 0.4)) and not op["trailing_ativo"]: op["trailing_ativo"] = True
+                        
                         if op["trailing_ativo"]:
-                            linha_de_venda = op["lucro_maximo"] - distancia_ts
-                            if lucro_pct <= linha_de_venda:
-                                vender = True; motivo_venda = "Trailing Executado"
-                        else:
-                            if lucro_pct <= stop_loss_rigido:
-                                vender = True; motivo_venda = "Stop Loss de Proteção"
+                            if lucro_pct <= (op["lucro_maximo"] - float(user.get("distancia_trailing", 0.2))): vender = True
+                        elif lucro_pct <= -0.35: vender = True
 
                         if vender:
-                            print(f"   🤖 [{symbol}] FECHADO PELO ROBÔ: {motivo_venda} | Lucro: {lucro_pct:.2f}%")
-                            api_base44("PUT", ENDPOINTS["operacao"], {
-                                "preco_saida": preco, "lucro_porcentagem": lucro_pct, 
-                                "lucro_financeiro": lucro_financeiro_atual, "status": "Fechada"
-                            }, id_registro=op["id"])
-                            atualizar_dashboard_total(user, lucro_pct, lucro_financeiro_atual)
-                            
-                            if lucro_pct > 0: historico_hora[mem_key]['reais_vitorias'] += 1
-                            else: historico_hora[mem_key]['reais_derrotas'] += 1
+                            api_base44("PUT", ENDPOINTS["operacao"], {"preco_saida": preco, "lucro_porcentagem": lucro_pct, "lucro_financeiro": lucro_fin, "status": "Fechada"}, id_registro=op["id"])
+                            atualizar_dashboard_total(user, lucro_pct, lucro_fin)
                             del operacoes_abertas[mem_key]
 
+                    # PROCURA ENTRADA
                     else:
-                        sinal_compra = (direcao == "Compra" and rsi <= limite_rsi)
-                        sinal_venda = (direcao == "Venda" and rsi >= limite_rsi)
+                        direcao = user.get("direcao_operacao", "Compra")
+                        limite_rsi = float(user.get("rsi_alvo", 40))
+                        if (direcao == "Compra" and rsi <= limite_rsi) or (direcao == "Venda" and rsi >= limite_rsi):
+                            res = api_base44("POST", ENDPOINTS["operacao"], {"usuario_id": uid, "par_moeda": symbol, "tipo_ordem": direcao, "categoria_ordem": modo, "preco_entrada": preco, "data_hora": datetime.now().isoformat(), "status": "Aberta"})
+                            if res and 'id' in res: operacoes_abertas[mem_key] = {"id": res['id'], "entrada": preco, "lucro_maximo": 0.0, "trailing_ativo": False, "capital_alocado": capital_op, "tipo_ordem": direcao}
 
-                        if (sinal_compra or sinal_venda) and capital_operacao > 10:
-                            print(f"   🎯 [{symbol}] SINAL DE {direcao.upper()}! Alocando ${capital_operacao:.2f}")
-                            res = api_base44("POST", ENDPOINTS["operacao"], {
-                                "usuario_id": uid, "par_moeda": symbol, "tipo_ordem": direcao,
-                                "categoria_ordem": modo, "preco_entrada": preco, "data_hora": datetime.now().isoformat(), "status": "Aberta"
-                            })
-                            if res and 'id' in res: 
-                                operacoes_abertas[mem_key] = {
-                                    "id": res['id'], "entrada": preco, "lucro_maximo": 0.0, 
-                                    "trailing_ativo": False, "capital_alocado": capital_operacao, "tipo_ordem": direcao
-                                }
+                    # REUNIÃO IA (Frequência dinâmica)
+                    freq_ia = 900 if volatilidade > 1.5 else 1800
+                    if time.time() - ultima_reuniao_ia[mem_key] > freq_ia:
+                        reuniao_com_ia_gestora(user, symbol, preco, rsi, volatilidade, "TURBO", raio_x_book, tendencia_macro, taxa_funding, indice_medo, radar_baleias_dados[symbol])
+                        ultima_reuniao_ia[mem_key] = time.time()
 
-                        elif ((direcao == "Compra" and rsi <= (limite_rsi + 15)) or (direcao == "Venda" and rsi >= (limite_rsi - 15))) and len(ordens_fantasma[mem_key]) < 2:
-                            res = api_base44("POST", ENDPOINTS["operacao"], {
-                                "usuario_id": uid, "par_moeda": symbol, "tipo_ordem": direcao,
-                                "categoria_ordem": "Fantasma", "preco_entrada": preco, "data_hora": datetime.now().isoformat(), "status": "Aberta"
-                            })
-                            if res and 'id' in res:
-                                alvo = preco * (1 + (gatilho_ts/100)) if direcao == "Compra" else preco * (1 - (gatilho_ts/100))
-                                stop = preco * (1 + (stop_loss_rigido/100)) if direcao == "Compra" else preco * (1 - (stop_loss_rigido/100))
-                                ordens_fantasma[mem_key].append({
-                                    "id": res['id'], "entrada": preco, "alvo": alvo, "stop": stop, 
-                                    "tipo_ordem": direcao, "hora_criacao": time.time(), "capital_alocado": 100.0
-                                })
-
-                    for f in ordens_fantasma[mem_key][:]:
-                        bateu_alvo = (f["tipo_ordem"] == "Compra" and preco >= f["alvo"]) or (f["tipo_ordem"] == "Venda" and preco <= f["alvo"])
-                        bateu_stop = (f["tipo_ordem"] == "Compra" and preco <= f["stop"]) or (f["tipo_ordem"] == "Venda" and preco >= f["stop"])
-                        timeout = (time.time() - f.get("hora_criacao", time.time())) > 2700
-
-                        if bateu_alvo or bateu_stop or timeout:
-                            lucro_pct = ((preco - f['entrada']) / f['entrada']) * 100 if f["tipo_ordem"] == "Compra" else ((f['entrada'] - preco) / f['entrada']) * 100
-                                
-                            if lucro_pct > 0: historico_hora[mem_key]['fantasma_vitorias'] += 1
-                            else: historico_hora[mem_key]['fantasma_derrotas'] += 1
-                            
-                            lucro_financeiro = f.get("capital_alocado", 100) * (lucro_pct / 100)
-                            
-                            api_base44("PUT", ENDPOINTS["operacao"], {
-                                "preco_saida": preco, "lucro_porcentagem": abs(lucro_pct),
-                                "lucro_financeiro": lucro_financeiro, "status": "Fechada"
-                            }, id_registro=f['id'])
-                            ordens_fantasma[mem_key].remove(f)
-
-            time.sleep(45)
-        except Exception as e: print(f"Erro Crítico: {e}"); time.sleep(60)
+            time.sleep(10) # ⚡️ O SEGREDO DO TEMPO REAL ESTÁ AQUI
+        except: time.sleep(10)
 
 if __name__ == "__main__":
     iniciar_loop()
