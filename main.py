@@ -114,7 +114,7 @@ def atualizar_dashboard_total(usuario, lucro_operacao_pct, valor_financeiro):
     }, id_registro=usuario['id'])
 
 # ==========================================
-# 3. O CÉREBRO: IA INSTITUCIONAL (LONG/SHORT)
+# 3. O CÉREBRO: IA APRENDENDO COM FANTASMAS
 # ==========================================
 def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual, volatilidade, marcha, raio_x_book, tendencia_macro, taxa_funding, indice_medo):
     uid = usuario.get("usuario_id")
@@ -134,13 +134,14 @@ def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual, volatilidade, marcha
     4. Funding Rate: {taxa_funding:.4f}%.
     5. Sentimento Global: {indice_medo}.
     
-    PLACAR DO ROBÔ:
-    Vitórias: {hist['reais_vitorias']} | Derrotas: {hist['reais_derrotas']}
+    PLACAR DO ROBÔ (APRENDA COM ISTO):
+    Conta Demo Real - Vitórias: {hist['reais_vitorias']} | Derrotas: {hist['reais_derrotas']}
+    Fantasmas (Testes) - Vitórias: {hist['fantasma_vitorias']} | Derrotas: {hist['fantasma_derrotas']}
     
-    TAREFA COMO DIRETOR DE RISCO SNIPER (SCALPING DE IMPULSO):
+    TAREFA COMO DIRETOR DE RISCO SNIPER:
     - Escolha a 'direcao_operacao': "Compra" (Long) ou "Venda" (Short). Siga a tendência macro (EMA 200).
-    - Defina o 'rsi_alvo'. Se for Compra, o robô atira quando o RSI cair para este alvo (ex: 30). Se for Venda, o robô atira quando o RSI subir para este alvo (ex: 70).
-    - Mantenha alvos curtos e proteções justas para um Scalping eficiente.
+    - Defina o 'rsi_alvo'.
+    - REGRA DE APRENDIZADO: Se os Fantasmas têm mais vitórias que a conta Demo, significa que a margem deles (RSI Alvo + 15 na compra, ou - 15 na venda) está mais assertiva. Mova o seu 'rsi_alvo' para copiar a estratégia vencedora dos Fantasmas!
     
     Responda APENAS um JSON válido no formato:
     {{
@@ -148,7 +149,7 @@ def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual, volatilidade, marcha
       "rsi_alvo": 35, 
       "gatilho_trailing": 0.4, 
       "distancia_trailing": 0.2, 
-      "status_mercado": "🟢 Tendência de Alta Confirmada",
+      "status_mercado": "🟢 Seguindo estratégia dos Fantasmas",
       "observacao_ia": "Sua tese..."
     }}
     """
@@ -156,7 +157,6 @@ def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual, volatilidade, marcha
         res = cliente_ia.models.generate_content(model=MODELO_GEMINI, contents=prompt)
         nova_regra = json.loads(res.text.replace("```json", "").replace("```", "").strip())
         
-        # Garante retrocompatibilidade se a base de dados ainda tiver a nomenclatura antiga
         nova_regra["rsi_alvo_compra"] = nova_regra["rsi_alvo"] 
         
         api_base44("PUT", ENDPOINTS["controle"], nova_regra, id_registro=id_banco)
@@ -168,13 +168,11 @@ def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual, volatilidade, marcha
 # 4. O OPERÁRIO: LOOP PRINCIPAL
 # ==========================================
 def iniciar_loop():
-    print("🚀 MIRAQUANTIA SCALPER - LONG/SHORT E STOP CURTO ATIVADOS")
+    print("🚀 MIRAQUANTIA SCALPER - MACHINE LEARNING ATIVADO")
     global ultima_reuniao_ia, ordens_fantasma, historico_hora, operacoes_abertas, data_operacao_usuario
     
     indice_medo = obter_medo_e_ganancia()
     ultimo_update_medo = time.time()
-    
-    teste_forcar_venda = False  # Trava do teste
     
     while True:
         try:
@@ -192,28 +190,6 @@ def iniciar_loop():
             
             if preco is None:
                 time.sleep(60); continue
-
-            # --- INÍCIO DO BLOCO DE TESTE ---
-            if not teste_forcar_venda:
-                print("🧪 [TESTE] Forçando Ordem Fantasma de VENDA para conferência visual...")
-                test_user_id = configs[0].get("usuario_id")
-                res_teste = api_base44("POST", ENDPOINTS["operacao"], {
-                    "usuario_id": test_user_id, "par_moeda": SYMBOL, "tipo_ordem": "Venda",
-                    "categoria_ordem": "Fantasma", "preco_entrada": preco, 
-                    "data_hora": datetime.now().isoformat(), "status": "Aberta"
-                })
-                if res_teste and 'id' in res_teste:
-                    # CORREÇÃO: Cria a memória do usuário se ela ainda não existir
-                    if test_user_id not in ordens_fantasma:
-                        ordens_fantasma[test_user_id] = []
-                    
-                    ordens_fantasma[test_user_id].append({
-                        "id": res_teste['id'], "entrada": preco, 
-                        "alvo": preco * 0.996, "stop": preco * 1.0035, "tipo_ordem": "Venda"
-                    })
-                print("🧪 [TESTE] Ordem de Venda enviada! Verifique o Dashboard.")
-                teste_forcar_venda = True # Trava ativada para não enviar de novo
-            # --- FIM DO BLOCO DE TESTE ---
 
             if volatilidade < 0.5:
                 tempo_espera_ia = 3600; marcha = "LENTA"
@@ -255,26 +231,24 @@ def iniciar_loop():
                 if lucro_hoje >= meta: continue
                 if lucro_hoje <= -limite_perda: continue
 
-                # NOVOS PARÂMETROS DE DIREÇÃO E ALVO
                 direcao = user.get("direcao_operacao", "Compra")
                 limite_rsi = float(user.get("rsi_alvo", user.get("rsi_alvo_compra", 40)))
                 gatilho_ts = float(user.get("gatilho_trailing", 0.4))
                 distancia_ts = float(user.get("distancia_trailing", 0.2))
-                stop_loss_rigido = -0.35 # CORTE NA RAIZ!
+                stop_loss_rigido = -0.35
 
                 # REUNIÃO DA IA
                 if time.time() - ultima_reuniao_ia[uid] > tempo_espera_ia:
                     reuniao_com_ia_gestora(user, preco, rsi, volatilidade, marcha, raio_x_book, tendencia_macro, taxa_funding, indice_medo)
                     ultima_reuniao_ia[uid] = time.time()
 
-                # GESTÃO DE ORDENS ABERTAS (LUCRO BILATERAL)
+                # GESTÃO DE ORDENS ABERTAS (DEMO/REAL)
                 if uid in operacoes_abertas:
                     op = operacoes_abertas[uid]
                     
-                    # CÁLCULO DE LUCRO DEPENDE DA DIREÇÃO!
                     if op["tipo_ordem"] == "Compra":
                         lucro_pct = ((preco - op["entrada"]) / op["entrada"]) * 100
-                    else: # Venda (Ganha quando o preço cai)
+                    else:
                         lucro_pct = ((op["entrada"] - preco) / op["entrada"]) * 100
                     
                     if lucro_pct > op["lucro_maximo"]: op["lucro_maximo"] = lucro_pct
@@ -283,40 +257,34 @@ def iniciar_loop():
 
                     if lucro_pct >= gatilho_ts and not op["trailing_ativo"]:
                         op["trailing_ativo"] = True
-                        print(f"   🛡️ [{uid}] TRAILING ATIVADO! Garantindo o lucro do scalper...")
+                        print(f"   🛡️ [{uid}] TRAILING ATIVADO! Garantindo o lucro...")
 
                     if op["trailing_ativo"]:
                         linha_de_venda = op["lucro_maximo"] - distancia_ts
-                        print(f"   🏄‍♂️ [{uid}] ({op['tipo_ordem']}) Atual: {lucro_pct:.2f}% | Topo: {op['lucro_maximo']:.2f}% | Stop Seguro: {linha_de_venda:.2f}%")
                         if lucro_pct <= linha_de_venda:
                             vender = True; motivo_venda = "Trailing Executado"
                     else:
-                        print(f"   👁️ [{uid}] ({op['tipo_ordem']}) Vigiando... Lucro: {lucro_pct:.2f}%")
                         if lucro_pct <= stop_loss_rigido:
-                            vender = True; motivo_venda = "Stop Loss de Proteção (Corte Rápido)"
+                            vender = True; motivo_venda = "Stop Loss de Proteção"
 
                     if vender:
                         lucro_financeiro = op["capital_alocado"] * (lucro_pct / 100)
-                        print(f"   💰 [{uid}] FECHANDO ORDEM ({motivo_venda})! Lucro: {lucro_pct:.2f}% (${lucro_financeiro:.2f})")
-                        
                         api_base44("PUT", ENDPOINTS["operacao"], {
                             "preco_saida": preco, "lucro_porcentagem": lucro_pct, 
                             "lucro_financeiro": lucro_financeiro, "status": "Fechada"
                         }, id_registro=op["id"])
-                        
                         atualizar_dashboard_total(user, lucro_pct, lucro_financeiro)
                         
                         if lucro_pct > 0: historico_hora[uid]['reais_vitorias'] += 1
                         else: historico_hora[uid]['reais_derrotas'] += 1
                         del operacoes_abertas[uid]
 
-                # PROCURA NOVAS ENTRADAS (SNIPER SCALPING)
+                # PROCURA NOVAS ENTRADAS
                 else:
                     sinal_compra = (direcao == "Compra" and rsi <= limite_rsi)
                     sinal_venda = (direcao == "Venda" and rsi >= limite_rsi)
 
                     if sinal_compra or sinal_venda:
-                        print(f"   🎯 [{uid}] SINAL DE {direcao.upper()}! RSI ({rsi:.2f}) atingiu o alvo ({limite_rsi}). Alocando ${capital_operacao:.2f}")
                         res = api_base44("POST", ENDPOINTS["operacao"], {
                             "usuario_id": uid, "par_moeda": SYMBOL, "tipo_ordem": direcao,
                             "categoria_ordem": modo, "preco_entrada": preco, "data_hora": datetime.now().isoformat(), "status": "Aberta"
@@ -324,12 +292,11 @@ def iniciar_loop():
                         if res and 'id' in res: 
                             operacoes_abertas[uid] = {
                                 "id": res['id'], "entrada": preco, "lucro_maximo": 0.0, 
-                                "trailing_ativo": False, "capital_alocado": capital_operacao,
-                                "tipo_ordem": direcao
+                                "trailing_ativo": False, "capital_alocado": capital_operacao, "tipo_ordem": direcao
                             }
 
-                    # FANTASMAS (Também adaptados para Long/Short)
-                    elif (direcao == "Compra" and rsi <= (limite_rsi + 15)) or (direcao == "Venda" and rsi >= (limite_rsi - 15)):
+                    # FANTASMAS (Anti-spam de 2 ordens no máximo)
+                    elif ((direcao == "Compra" and rsi <= (limite_rsi + 15)) or (direcao == "Venda" and rsi >= (limite_rsi - 15))) and len(ordens_fantasma[uid]) < 2:
                         res = api_base44("POST", ENDPOINTS["operacao"], {
                             "usuario_id": uid, "par_moeda": SYMBOL, "tipo_ordem": direcao,
                             "categoria_ordem": "Fantasma", "preco_entrada": preco, "data_hora": datetime.now().isoformat(), "status": "Aberta"
@@ -338,24 +305,31 @@ def iniciar_loop():
                             alvo = preco * (1 + (gatilho_ts/100)) if direcao == "Compra" else preco * (1 - (gatilho_ts/100))
                             stop = preco * (1 + (stop_loss_rigido/100)) if direcao == "Compra" else preco * (1 - (stop_loss_rigido/100))
                             ordens_fantasma[uid].append({
-                                "id": res['id'], "entrada": preco, "alvo": alvo, "stop": stop, "tipo_ordem": direcao
+                                "id": res['id'], "entrada": preco, "alvo": alvo, "stop": stop, 
+                                "tipo_ordem": direcao, "hora_criacao": time.time(), "capital_alocado": capital_operacao
                             })
 
-                # ACOMPANHA FANTASMAS
+                # ACOMPANHA FANTASMAS E FECHA-AS
                 for f in ordens_fantasma[uid][:]:
                     bateu_alvo = (f["tipo_ordem"] == "Compra" and preco >= f["alvo"]) or (f["tipo_ordem"] == "Venda" and preco <= f["alvo"])
                     bateu_stop = (f["tipo_ordem"] == "Compra" and preco <= f["stop"]) or (f["tipo_ordem"] == "Venda" and preco >= f["stop"])
+                    timeout = (time.time() - f.get("hora_criacao", time.time())) > 2700
 
-                    if bateu_alvo:
-                        historico_hora[uid]['fantasma_vitorias'] += 1
-                        lucro_pct = ((preco - f['entrada']) / f['entrada']) * 100 if f["tipo_ordem"] == "Compra" else ((f['entrada'] - preco) / f['entrada']) * 100
-                        api_base44("PUT", ENDPOINTS["operacao"], {"preco_saida": preco, "lucro_porcentagem": abs(lucro_pct), "status": "Fechada"}, id_registro=f['id'])
-                        ordens_fantasma[uid].remove(f)
-                    
-                    elif bateu_stop:
-                        historico_hora[uid]['fantasma_derrotas'] += 1
-                        lucro_pct = ((preco - f['entrada']) / f['entrada']) * 100 if f["tipo_ordem"] == "Compra" else ((f['entrada'] - preco) / f['entrada']) * 100
-                        api_base44("PUT", ENDPOINTS["operacao"], {"preco_saida": preco, "lucro_porcentagem": -abs(lucro_pct), "status": "Fechada"}, id_registro=f['id'])
+                    if bateu_alvo or bateu_stop or timeout:
+                        if f["tipo_ordem"] == "Compra":
+                            lucro_pct = ((preco - f['entrada']) / f['entrada']) * 100
+                        else:
+                            lucro_pct = ((f['entrada'] - preco) / f['entrada']) * 100
+                            
+                        if lucro_pct > 0: historico_hora[uid]['fantasma_vitorias'] += 1
+                        else: historico_hora[uid]['fantasma_derrotas'] += 1
+                        
+                        lucro_financeiro = f.get("capital_alocado", 100) * (lucro_pct / 100)
+                        
+                        api_base44("PUT", ENDPOINTS["operacao"], {
+                            "preco_saida": preco, "lucro_porcentagem": lucro_pct,
+                            "lucro_financeiro": lucro_financeiro, "status": "Fechada"
+                        }, id_registro=f['id'])
                         ordens_fantasma[uid].remove(f)
 
             time.sleep(60)
