@@ -56,7 +56,6 @@ def obter_medo_e_ganancia():
         return "Neutro"
 
 def obter_radar_baleias():
-    """Busca a relação Long/Short dos Top Traders globais (Proxy de Sentimento Institucional)"""
     try:
         url = "https://fapi.binance.com/futures/data/topLongShortAccountRatio?symbol=BTCUSDT&period=5m"
         res = requests.get(url, timeout=5)
@@ -129,6 +128,36 @@ def atualizar_dashboard_total(usuario, lucro_operacao_pct, valor_financeiro):
         "lucro_hoje": 100 * (lucro_acumulado / 100) 
     }, id_registro=usuario['id'])
 
+def recuperar_memoria_encravada():
+    """Busca na Base44 se o bot reiniciou e deixou ordens 'Abertas' órfãs."""
+    print("🔍 Procurando por ordens abertas na base de dados para recuperar memória...")
+    todas_ops = api_base44("GET", ENDPOINTS["operacao"])
+    if todas_ops:
+        for op in todas_ops:
+            if op.get("status") == "Aberta":
+                uid = op.get("usuario_id")
+                cat = op.get("categoria_ordem", "Demo")
+                preco_ent = float(op.get("preco_entrada", 0))
+                if preco_ent == 0: continue
+                tipo = op.get("tipo_ordem", "Compra")
+
+                if cat == "Fantasma":
+                    if uid not in ordens_fantasma: ordens_fantasma[uid] = []
+                    # Reconstrói os alvos do fantasma para ele poder fechar
+                    alvo = preco_ent * 1.004 if tipo == "Compra" else preco_ent * 0.996
+                    stop = preco_ent * 0.9965 if tipo == "Compra" else preco_ent * 1.0035
+                    ordens_fantasma[uid].append({
+                        "id": op['id'], "entrada": preco_ent, "alvo": alvo, "stop": stop, 
+                        "tipo_ordem": tipo, "hora_criacao": time.time(), "capital_alocado": 100.0
+                    })
+                else:
+                    if uid not in operacoes_abertas:
+                        operacoes_abertas[uid] = {
+                            "id": op['id'], "entrada": preco_ent, "lucro_maximo": 0.0, 
+                            "trailing_ativo": False, "capital_alocado": 100.0, "tipo_ordem": tipo
+                        }
+        print("✅ Memória restaurada com sucesso!")
+
 # ==========================================
 # 3. O CÉREBRO: IA + RADAR DE BALEIAS + FILTRO DE FANTASMAS
 # ==========================================
@@ -185,11 +214,14 @@ def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual, volatilidade, marcha
 # 4. O OPERÁRIO: LOOP PRINCIPAL
 # ==========================================
 def iniciar_loop():
-    print("🚀 MIRAQUANTIA SCALPER - RADAR DE BALEIAS E FILTRO ANTI-ARMADILHA ATIVADOS")
+    print("🚀 MIRAQUANTIA SCALPER - MEMÓRIA RESILIENTE ATIVADA")
     global ultima_reuniao_ia, ordens_fantasma, historico_hora, operacoes_abertas, data_operacao_usuario
     
     indice_medo = obter_medo_e_ganancia()
     ultimo_update_medo = time.time()
+    
+    # Executa a recuperação de memória logo ao ligar!
+    recuperar_memoria_encravada()
     
     while True:
         try:
@@ -256,7 +288,7 @@ def iniciar_loop():
 
                 # REUNIÃO DA IA COM O RADAR DE BALEIAS
                 if time.time() - ultima_reuniao_ia[uid] > tempo_espera_ia:
-                    radar_baleias = obter_radar_baleias() # Coleta a fofoca institucional
+                    radar_baleias = obter_radar_baleias() 
                     reuniao_com_ia_gestora(user, preco, rsi, volatilidade, marcha, raio_x_book, tendencia_macro, taxa_funding, indice_medo, radar_baleias)
                     ultima_reuniao_ia[uid] = time.time()
 
