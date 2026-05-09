@@ -55,6 +55,22 @@ def obter_medo_e_ganancia():
     except:
         return "Neutro"
 
+def obter_radar_baleias():
+    """Busca a relação Long/Short dos Top Traders globais (Proxy de Sentimento Institucional)"""
+    try:
+        url = "https://fapi.binance.com/futures/data/topLongShortAccountRatio?symbol=BTCUSDT&period=5m"
+        res = requests.get(url, timeout=5)
+        dados = res.json()
+        if dados and len(dados) > 0:
+            ultimo = dados[-1]
+            longs_pct = float(ultimo['longAccount']) * 100
+            shorts_pct = float(ultimo['shortAccount']) * 100
+            return f"{longs_pct:.1f}% Comprados (Long) vs {shorts_pct:.1f}% Vendidos (Short)"
+        return "Dados Indisponíveis"
+    except Exception as e:
+        print(f"Erro ao buscar Radar de Baleias: {e}")
+        return "Dados Indisponíveis"
+
 def ler_mercado(exchange):
     try:
         velas = exchange.fetch_ohlcv(SYMBOL, timeframe='1m', limit=15)
@@ -114,9 +130,9 @@ def atualizar_dashboard_total(usuario, lucro_operacao_pct, valor_financeiro):
     }, id_registro=usuario['id'])
 
 # ==========================================
-# 3. O CÉREBRO: IA APRENDENDO COM FANTASMAS
+# 3. O CÉREBRO: IA + RADAR DE BALEIAS + FILTRO DE FANTASMAS
 # ==========================================
-def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual, volatilidade, marcha, raio_x_book, tendencia_macro, taxa_funding, indice_medo):
+def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual, volatilidade, marcha, raio_x_book, tendencia_macro, taxa_funding, indice_medo, radar_baleias):
     uid = usuario.get("usuario_id")
     id_banco = usuario.get("id") 
     rsi_antigo = usuario.get("rsi_alvo", 40)
@@ -133,15 +149,16 @@ def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual, volatilidade, marcha
     3. Order Book: {raio_x_book}.
     4. Funding Rate: {taxa_funding:.4f}%.
     5. Sentimento Global: {indice_medo}.
+    6. RADAR DE BALEIAS (Top Traders Globais): {radar_baleias}.
     
-    PLACAR DO ROBÔ (APRENDA COM ISTO):
+    PLACAR DO ROBÔ (MACHINE LEARNING E TESTE DE REALIDADE):
     Conta Demo Real - Vitórias: {hist['reais_vitorias']} | Derrotas: {hist['reais_derrotas']}
     Fantasmas (Testes) - Vitórias: {hist['fantasma_vitorias']} | Derrotas: {hist['fantasma_derrotas']}
     
     TAREFA COMO DIRETOR DE RISCO SNIPER:
-    - Escolha a 'direcao_operacao': "Compra" (Long) ou "Venda" (Short). Siga a tendência macro (EMA 200).
+    - Escolha a 'direcao_operacao': "Compra" (Long) ou "Venda" (Short).
     - Defina o 'rsi_alvo'.
-    - REGRA DE APRENDIZADO: Se os Fantasmas têm mais vitórias que a conta Demo, significa que a margem deles (RSI Alvo + 15 na compra, ou - 15 na venda) está mais assertiva. Mova o seu 'rsi_alvo' para copiar a estratégia vencedora dos Fantasmas!
+    - REGRA DE OURO (DETECTOR DE MENTIRAS): As Baleias podem estar a fazer armadilhas de liquidez (Hedging). Se o Radar de Baleias indicar uma direção (ex: Long), mas o Placar dos Fantasmas mostrar que essa mesma direção está a dar prejuízo nos testes ao vivo, IGNORE as Baleias e siga a matemática fria dos Fantasmas. Os Fantasmas são a prova real do mercado atual!
     
     Responda APENAS um JSON válido no formato:
     {{
@@ -149,7 +166,7 @@ def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual, volatilidade, marcha
       "rsi_alvo": 35, 
       "gatilho_trailing": 0.4, 
       "distancia_trailing": 0.2, 
-      "status_mercado": "🟢 Seguindo estratégia dos Fantasmas",
+      "status_mercado": "🟢 Fantasmas confirmam tendência; ignorando armadilha de baleias",
       "observacao_ia": "Sua tese..."
     }}
     """
@@ -168,7 +185,7 @@ def reuniao_com_ia_gestora(usuario, preco_atual, rsi_atual, volatilidade, marcha
 # 4. O OPERÁRIO: LOOP PRINCIPAL
 # ==========================================
 def iniciar_loop():
-    print("🚀 MIRAQUANTIA SCALPER - MACHINE LEARNING ATIVADO")
+    print("🚀 MIRAQUANTIA SCALPER - RADAR DE BALEIAS E FILTRO ANTI-ARMADILHA ATIVADOS")
     global ultima_reuniao_ia, ordens_fantasma, historico_hora, operacoes_abertas, data_operacao_usuario
     
     indice_medo = obter_medo_e_ganancia()
@@ -237,9 +254,10 @@ def iniciar_loop():
                 distancia_ts = float(user.get("distancia_trailing", 0.2))
                 stop_loss_rigido = -0.35
 
-                # REUNIÃO DA IA
+                # REUNIÃO DA IA COM O RADAR DE BALEIAS
                 if time.time() - ultima_reuniao_ia[uid] > tempo_espera_ia:
-                    reuniao_com_ia_gestora(user, preco, rsi, volatilidade, marcha, raio_x_book, tendencia_macro, taxa_funding, indice_medo)
+                    radar_baleias = obter_radar_baleias() # Coleta a fofoca institucional
+                    reuniao_com_ia_gestora(user, preco, rsi, volatilidade, marcha, raio_x_book, tendencia_macro, taxa_funding, indice_medo, radar_baleias)
                     ultima_reuniao_ia[uid] = time.time()
 
                 # GESTÃO DE ORDENS ABERTAS (DEMO/REAL)
@@ -327,7 +345,7 @@ def iniciar_loop():
                         lucro_financeiro = f.get("capital_alocado", 100) * (lucro_pct / 100)
                         
                         api_base44("PUT", ENDPOINTS["operacao"], {
-                            "preco_saida": preco, "lucro_porcentagem": lucro_pct,
+                            "preco_saida": preco, "lucro_porcentagem": abs(lucro_pct),
                             "lucro_financeiro": lucro_financeiro, "status": "Fechada"
                         }, id_registro=f['id'])
                         ordens_fantasma[uid].remove(f)
