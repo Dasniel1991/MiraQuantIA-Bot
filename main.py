@@ -140,7 +140,6 @@ def recuperar_memoria_encravada():
                 mem_key = f"{uid}_{symbol}"
                 cat = op.get("categoria_ordem", "Demo")
                 
-                # CORREÇÃO: Evita erro de float caso o valor venha nulo da Base44
                 preco_ent = float(op.get("preco_entrada") or 0)
                 if preco_ent == 0: continue
                 
@@ -156,7 +155,6 @@ def recuperar_memoria_encravada():
                     })
                 else:
                     if mem_key not in operacoes_abertas:
-                        # CORREÇÃO: Define o capital base padrão de forma segura
                         operacoes_abertas[mem_key] = {
                             "id": op['id'], "entrada": preco_ent, "lucro_maximo": 0.0, 
                             "trailing_ativo": False, "capital_alocado": 100.0, "tipo_ordem": tipo
@@ -221,7 +219,7 @@ def reuniao_com_ia_gestora(usuario, symbol, preco_atual, rsi_atual, volatilidade
 # 4. O OPERÁRIO: LOOP MULTIPAR
 # ==========================================
 def iniciar_loop():
-    print("🚀 MIRAQUANTIA SCALPER - MODO MULTIPAR ATIVADO (BTC, ETH, SOL)")
+    print("🚀 MIRAQUANTIA SCALPER - ATUALIZAÇÃO AO VIVO E INTERVENÇÃO HUMANA ATIVADOS")
     global ultima_reuniao_ia, ordens_fantasma, historico_hora, operacoes_abertas, data_operacao_usuario
     
     indice_medo = obter_medo_e_ganancia()
@@ -237,8 +235,12 @@ def iniciar_loop():
 
             configs = api_base44("GET", ENDPOINTS["controle"])
             saldos = api_base44("GET", ENDPOINTS["saldo"]) 
+            todas_ops_db = api_base44("GET", ENDPOINTS["operacao"]) # Puxa todas as ordens para checar Intervenção Humana
             
             if not configs: time.sleep(60); continue
+
+            # Cria lista rápida de IDs que já foram fechados na Base44 pelo Dasniel
+            ops_fechadas_db = [op['id'] for op in todas_ops_db if op.get("status") == "Fechada"] if todas_ops_db else []
 
             ex = ccxt.bybit()
             dados_mercado = {}
@@ -315,11 +317,31 @@ def iniciar_loop():
                         direcao = user.get("direcao_operacao", "Compra")
                         limite_rsi = float(user.get("rsi_alvo", user.get("rsi_alvo_compra", 40)))
 
+                    # ---------------------------------------------------------
+                    # GESTÃO DE ORDENS ABERTAS COM INTERVENÇÃO HUMANA & AO VIVO
+                    # ---------------------------------------------------------
                     if mem_key in operacoes_abertas:
                         op = operacoes_abertas[mem_key]
                         
+                        # 🧑‍💻 VERIFICA SE O DASNIEL FECHOU MANUALMENTE
+                        if op["id"] in ops_fechadas_db:
+                            print(f"   🧑‍💻 [{symbol}] INTERVENÇÃO HUMANA DETETADA! Ordem já foi fechada no painel.")
+                            del operacoes_abertas[mem_key]
+                            continue # Pula para a próxima moeda
+                        
+                        # Calcula o lucro atual
                         lucro_pct = ((preco - op["entrada"]) / op["entrada"]) * 100 if op["tipo_ordem"] == "Compra" else ((op["entrada"] - preco) / op["entrada"]) * 100
                         if lucro_pct > op["lucro_maximo"]: op["lucro_maximo"] = lucro_pct
+
+                        lucro_financeiro_atual = op["capital_alocado"] * (lucro_pct / 100)
+
+                        # 📡 TRANSMISSOR AO VIVO: Atualiza a Base44 com os números atuais enquanto a ordem está aberta
+                        api_base44("PUT", ENDPOINTS["operacao"], {
+                            "preco_saida": preco, 
+                            "lucro_porcentagem": lucro_pct, 
+                            "lucro_financeiro": lucro_financeiro_atual
+                            # NÃO envia "status" para não atrapalhar caso você queira fechar
+                        }, id_registro=op["id"])
 
                         vender = False; motivo_venda = ""
 
@@ -336,12 +358,12 @@ def iniciar_loop():
                                 vender = True; motivo_venda = "Stop Loss de Proteção"
 
                         if vender:
-                            lucro_financeiro = op["capital_alocado"] * (lucro_pct / 100)
+                            print(f"   🤖 [{symbol}] FECHADO PELO ROBÔ: {motivo_venda} | Lucro: {lucro_pct:.2f}%")
                             api_base44("PUT", ENDPOINTS["operacao"], {
                                 "preco_saida": preco, "lucro_porcentagem": lucro_pct, 
-                                "lucro_financeiro": lucro_financeiro, "status": "Fechada"
+                                "lucro_financeiro": lucro_financeiro_atual, "status": "Fechada"
                             }, id_registro=op["id"])
-                            atualizar_dashboard_total(user, lucro_pct, lucro_financeiro)
+                            atualizar_dashboard_total(user, lucro_pct, lucro_financeiro_atual)
                             
                             if lucro_pct > 0: historico_hora[mem_key]['reais_vitorias'] += 1
                             else: historico_hora[mem_key]['reais_derrotas'] += 1
