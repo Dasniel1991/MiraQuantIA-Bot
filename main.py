@@ -4,7 +4,7 @@ import requests
 import os
 import json
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from google import genai
 
 # ==========================================
@@ -32,14 +32,18 @@ ordens_fantasma = {}
 historico_hora = {}
 ultima_reuniao_ia = {}
 data_operacao_usuario = {}
+timestamps_ia = {'BTC/USDT': '--:--:--', 'ETH/USDT': '--:--:--', 'SOL/USDT': '--:--:--'}
 
 # ==========================================
 # 2. FUNÇÕES DE APOIO E LEITURA DE MERCADO
 # ==========================================
+def obter_data_hora_br():
+    agora_utc = datetime.utcnow()
+    return agora_utc - timedelta(hours=3)
+
 def is_fim_de_semana():
-    """Detecta se estamos no modo de baixa liquidez (Sexta > 20h, Sábado ou Domingo)"""
-    agora = datetime.now()
-    dia_semana = agora.weekday() # 0=Segunda, 4=Sexta, 5=Sábado, 6=Domingo
+    agora = obter_data_hora_br()
+    dia_semana = agora.weekday() 
     hora = agora.hour
     if dia_semana == 5 or dia_semana == 6:
         return True
@@ -125,8 +129,21 @@ def ler_mercado(exchange, symbol):
             
         return preco_atual, rsi, volatilidade, raio_x_book, tendencia_macro, taxa_funding
     except Exception as e:
-        print(f"Erro na leitura do mercado ({symbol}): {e}")
         return None, None, None, None, None, None
+
+def reconciliar_lucro_diario(uid, id_banco, hoje_data, todas_ops_db):
+    lucro_real = 0.0
+    for op in todas_ops_db:
+        if op.get("usuario_id") == uid and op.get("status") == "Fechada" and op.get("categoria_ordem") != "Fantasma":
+            data_op = op.get("data_hora", "")
+            if hoje_data in data_op:
+                lucro_real += float(op.get("lucro_porcentagem", 0))
+    
+    api_base44("PUT", ENDPOINTS["controle"], {
+        "lucro_hoje_porcentagem": lucro_real,
+        "lucro_hoje": 100 * (lucro_real / 100) 
+    }, id_registro=id_banco)
+    return lucro_real
 
 def atualizar_dashboard_total(usuario, lucro_operacao_pct, valor_financeiro):
     uid = usuario['usuario_id']
@@ -171,7 +188,7 @@ def recuperar_memoria_encravada():
                         operacoes_abertas[mem_key] = {
                             "id": op['id'], "entrada": preco_ent, "lucro_maximo": 0.0, 
                             "trailing_ativo": False, "capital_alocado": float(op.get("capital_alocado", 100.0)), "tipo_ordem": tipo,
-                            "hora_criacao": time.time() # Inicia o cronômetro para as recuperadas
+                            "hora_criacao": time.time() 
                         }
         print("✅ Memória restaurada com sucesso!")
 
@@ -179,6 +196,7 @@ def recuperar_memoria_encravada():
 # 3. O CÉREBRO: IA + RADAR MULTIPAR
 # ==========================================
 def reuniao_com_ia_gestora(usuario, symbol, preco_atual, rsi_atual, volatilidade, marcha, raio_x_book, tendencia_macro, taxa_funding, indice_medo, radar_baleias):
+    global timestamps_ia
     id_banco = usuario.get("id") 
     mem_key = f"{usuario.get('usuario_id')}_{symbol}"
     
@@ -204,6 +222,13 @@ def reuniao_com_ia_gestora(usuario, symbol, preco_atual, rsi_atual, volatilidade
     try:
         res = cliente_ia.models.generate_content(model=MODELO_GEMINI, contents=prompt)
         nova_regra = json.loads(res.text.replace("```json", "").replace("```", "").strip())
+        
+        hora_reuniao = obter_data_hora_br().strftime('%H:%M:%S')
+        timestamps_ia[symbol] = hora_reuniao
+        
+        rodape = f"\n\n⏱️ Últimas atualizações: BTC [{timestamps_ia.get('BTC/USDT')}] | ETH [{timestamps_ia.get('ETH/USDT')}] | SOL [{timestamps_ia.get('SOL/USDT')}]"
+        nova_regra["observacao_ia"] = str(nova_regra.get("observacao_ia", "")) + rodape
+        
         nova_regra["rsi_alvo_compra"] = nova_regra["rsi_alvo"] 
         api_base44("PUT", ENDPOINTS["controle"], nova_regra, id_registro=id_banco)
         historico_hora[mem_key] = {"reais_vitorias": 0, "reais_derrotas": 0, "fantasma_vitorias": 0, "fantasma_derrotas": 0}
@@ -218,8 +243,8 @@ def reuniao_com_ia_gestora(usuario, symbol, preco_atual, rsi_atual, volatilidade
 # 4. O OPERÁRIO: LOOP TURBO COM TIME-DECAY E FDS
 # ==========================================
 def iniciar_loop():
-    print("🚀 MIRAQUANTIA SCALPER - GESTÃO DINÂMICA (TIME-DECAY & FDS) ATIVADA")
-    global ultima_reuniao_ia, ordens_fantasma, historico_hora, operacoes_abertas, data_operacao_usuario
+    print("🚀 MIRAQUANTIA SCALPER - MOTIVO DE FECHAMENTO ATIVADO")
+    global ultima_reuniao_ia, ordens_fantasma, historico_hora, operacoes_abertas, data_operacao_usuario, timestamps_ia
     
     indice_medo = obter_medo_e_ganancia()
     ultimo_update_medo = time.time()
@@ -243,8 +268,9 @@ def iniciar_loop():
             dados_mercado = {}
             radar_baleias_dados = {}
             
-            hoje_data = datetime.now().strftime('%Y-%m-%d')
-            hora_atual = datetime.now().strftime('%H:%M:%S')
+            agora_br = obter_data_hora_br()
+            hoje_data = agora_br.strftime('%Y-%m-%d')
+            hora_atual = agora_br.strftime('%H:%M:%S')
             fds_ativo = is_fim_de_semana()
             
             if fds_ativo:
@@ -257,25 +283,32 @@ def iniciar_loop():
                 if p is not None:
                     dados_mercado[symbol] = (p, r, v, rb, tm, tf)
                     radar_baleias_dados[symbol] = obter_radar_baleias(symbol)
-                    print(f"   ► {symbol} | Preço: ${p:.2f} | RSI: {r:.2f} | Volatilidade: {v:.2f}%")
 
             for user in configs:
                 uid = user.get("usuario_id")
                 modo = str(user.get("modo_operacao", "Demo")).capitalize()
                 meta = float(user.get("meta_diaria_porcentagem") or 2.0)
                 limite_perda = float(user.get("risco_maximo_porcentagem") or 10.0)
-                lucro_hoje = float(user.get("lucro_hoje_porcentagem") or 0.0)
 
                 if not user.get("status_bot"): continue
                 
-                # RESET DIÁRIO
-                if uid not in data_operacao_usuario: data_operacao_usuario[uid] = hoje_data
-                if data_operacao_usuario[uid] != hoje_data:
-                    api_base44("PUT", ENDPOINTS["controle"], {"lucro_hoje_porcentagem": 0.0, "lucro_hoje": 0.0}, id_registro=user['id'])
+                if uid not in data_operacao_usuario: 
+                    print(f"🔄 [{hora_atual}] Sincronizando meta diária com a Base44 para hoje ({hoje_data})...")
+                    lucro_hoje = reconciliar_lucro_diario(uid, user['id'], hoje_data, todas_ops_db)
                     data_operacao_usuario[uid] = hoje_data
-                    lucro_hoje = 0.0
+                elif data_operacao_usuario[uid] != hoje_data:
+                    print(f"🕛 MEIA NOITE NO BRASIL! Iniciando novo dia de operações para {uid}...")
+                    lucro_hoje = reconciliar_lucro_diario(uid, user['id'], hoje_data, todas_ops_db)
+                    data_operacao_usuario[uid] = hoje_data
+                else:
+                    lucro_hoje = float(user.get("lucro_hoje_porcentagem") or 0.0)
 
-                if lucro_hoje >= meta or lucro_hoje <= -limite_perda: continue
+                if lucro_hoje >= meta: 
+                    print(f"🏆 Meta diária atingida ({lucro_hoje:.2f}%). Robô em stand-by até meia-noite.")
+                    continue
+                if lucro_hoje <= -limite_perda: 
+                    print(f"🛑 Limite de perda diário atingido ({lucro_hoje:.2f}%). Proteção ativada.")
+                    continue
 
                 reg_saldo = next((s for s in saldos if s['usuario_id'] == uid), None) if saldos else None
                 saldo_total = float(reg_saldo.get('saldo_demo', 100)) if reg_saldo else 100.0
@@ -319,17 +352,15 @@ def iniciar_loop():
 
                         api_base44("PUT", ENDPOINTS["operacao"], {"preco_saida": preco, "lucro_porcentagem": lucro_pct, "lucro_financeiro": lucro_fin}, id_registro=op["id"])
 
-                        # AVALIAÇÃO DE TEMPO (CRONÔMETRO) E VOLATILIDADE
                         tempo_aberta = time.time() - op.get("hora_criacao", time.time())
-                        if volatilidade < 0.5: tempo_limite_fuga = 900  # 15 minutos (Mercado Lento)
-                        elif volatilidade <= 1.5: tempo_limite_fuga = 600 # 10 minutos (Normal)
-                        else: tempo_limite_fuga = 420 # 7 minutos (Turbo)
+                        if volatilidade < 0.5: tempo_limite_fuga = 900 
+                        elif volatilidade <= 1.5: tempo_limite_fuga = 600
+                        else: tempo_limite_fuga = 420 
 
                         modo_fuga = False
                         if tempo_aberta > tempo_limite_fuga:
                             modo_fuga = True
 
-                        # CONFIGURAÇÕES DE GATILHO E DISTÂNCIA BASE E FIM DE SEMANA
                         if fds_ativo:
                             gatilho_ts = 0.15
                             distancia_ts = 0.05
@@ -340,12 +371,9 @@ def iniciar_loop():
                         vender = False
                         motivo_venda = ""
 
-                        # LÓGICA DE FUGA: Se enrolou demais e deu um respiro de 0.05%, corta!
                         if modo_fuga and lucro_pct >= 0.05:
                             vender = True
-                            motivo_venda = f"Fuga por Tempo Esgotado (+0.05%)"
-
-                        # LÓGICA NORMAL DO TRAILING STOP E STOP LOSS
+                            motivo_venda = "Fuga por Tempo Esgotado"
                         elif lucro_pct >= gatilho_ts and not op["trailing_ativo"]: 
                             op["trailing_ativo"] = True
                             print(f"   🛡️ [{symbol}] TRAILING ATIVADO! Garantindo o lucro...")
@@ -360,7 +388,13 @@ def iniciar_loop():
 
                         if vender:
                             print(f"   🤖 [{symbol}] FECHADO PELO ROBÔ: {motivo_venda} | Lucro: {lucro_pct:.2f}%")
-                            api_base44("PUT", ENDPOINTS["operacao"], {"preco_saida": preco, "lucro_porcentagem": lucro_pct, "lucro_financeiro": lucro_fin, "status": "Fechada"}, id_registro=op["id"])
+                            api_base44("PUT", ENDPOINTS["operacao"], {
+                                "preco_saida": preco, 
+                                "lucro_porcentagem": lucro_pct, 
+                                "lucro_financeiro": lucro_fin, 
+                                "status": "Fechada",
+                                "motivo_fechamento": motivo_venda
+                            }, id_registro=op["id"])
                             atualizar_dashboard_total(user, lucro_pct, lucro_fin)
                             del operacoes_abertas[mem_key]
 
@@ -369,10 +403,32 @@ def iniciar_loop():
                         direcao = user.get("direcao_operacao", "Compra")
                         limite_rsi = float(user.get("rsi_alvo", 40))
                         if (direcao == "Compra" and rsi <= limite_rsi) or (direcao == "Venda" and rsi >= limite_rsi):
-                            res = api_base44("POST", ENDPOINTS["operacao"], {"usuario_id": uid, "par_moeda": symbol, "tipo_ordem": direcao, "categoria_ordem": modo, "preco_entrada": preco, "data_hora": datetime.now().isoformat(), "status": "Aberta"})
+                            data_hora_br = obter_data_hora_br().isoformat()
+                            res = api_base44("POST", ENDPOINTS["operacao"], {"usuario_id": uid, "par_moeda": symbol, "tipo_ordem": direcao, "categoria_ordem": modo, "preco_entrada": preco, "data_hora": data_hora_br, "status": "Aberta"})
                             if res and 'id' in res: operacoes_abertas[mem_key] = {"id": res['id'], "entrada": preco, "lucro_maximo": 0.0, "trailing_ativo": False, "capital_alocado": capital_op, "tipo_ordem": direcao, "hora_criacao": time.time()}
 
-                    # REUNIÃO IA
+                    # ORDEM FANTASMA - PROCESSO DE ENCERRAMENTO
+                    for f in ordens_fantasma[mem_key][:]:
+                        bateu_alvo = (f["tipo_ordem"] == "Compra" and preco >= f["alvo"]) or (f["tipo_ordem"] == "Venda" and preco <= f["alvo"])
+                        bateu_stop = (f["tipo_ordem"] == "Compra" and preco <= f["stop"]) or (f["tipo_ordem"] == "Venda" and preco >= f["stop"])
+                        timeout = (time.time() - f.get("hora_criacao", time.time())) > 2700
+
+                        if bateu_alvo or bateu_stop or timeout:
+                            lucro_pct = ((preco - f['entrada']) / f['entrada']) * 100 if f["tipo_ordem"] == "Compra" else ((f['entrada'] - preco) / f['entrada']) * 100
+                                
+                            if lucro_pct > 0: historico_hora[mem_key]['fantasma_vitorias'] += 1
+                            else: historico_hora[mem_key]['fantasma_derrotas'] += 1
+                            
+                            lucro_financeiro = f.get("capital_alocado", 100) * (lucro_pct / 100)
+                            motivo_fantasma = "Alvo Fantasma Atingido" if bateu_alvo else "Stop Fantasma" if bateu_stop else "Timeout Fantasma"
+                            
+                            api_base44("PUT", ENDPOINTS["operacao"], {
+                                "preco_saida": preco, "lucro_porcentagem": abs(lucro_pct),
+                                "lucro_financeiro": lucro_financeiro, "status": "Fechada",
+                                "motivo_fechamento": motivo_fantasma
+                            }, id_registro=f['id'])
+                            ordens_fantasma[mem_key].remove(f)
+
                     freq_ia = 900 if volatilidade > 1.5 else 1800
                     if time.time() - ultima_reuniao_ia[mem_key] > freq_ia:
                         reuniao_com_ia_gestora(user, symbol, preco, rsi, volatilidade, "TURBO", raio_x_book, tendencia_macro, taxa_funding, indice_medo, radar_baleias_dados[symbol])
