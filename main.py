@@ -32,7 +32,14 @@ ordens_fantasma = {}
 historico_hora = {}
 ultima_reuniao_ia = {}
 data_operacao_usuario = {}
+
+# Gestão do Relatório Triplo da IA
 timestamps_ia = {'BTC/USDT': '--:--:--', 'ETH/USDT': '--:--:--', 'SOL/USDT': '--:--:--'}
+teses_ia = {
+    'BTC/USDT': 'Aguardando primeira leitura...', 
+    'ETH/USDT': 'Aguardando primeira leitura...', 
+    'SOL/USDT': 'Aguardando primeira leitura...'
+}
 
 # ==========================================
 # 2. FUNÇÕES DE APOIO E LEITURA DE MERCADO
@@ -137,7 +144,7 @@ def reconciliar_lucro_diario(uid, id_banco, hoje_data, todas_ops_db):
         if op.get("usuario_id") == uid and op.get("status") == "Fechada" and op.get("categoria_ordem") != "Fantasma":
             data_op = op.get("data_hora", "")
             if hoje_data in data_op:
-                lucro_real += float(op.get("lucro_porcentagem", 0))
+                lucro_real += float(op.get("lucro_porcentagem") or 0.0) # Blindagem matemática
     
     api_base44("PUT", ENDPOINTS["controle"], {
         "lucro_hoje_porcentagem": lucro_real,
@@ -151,7 +158,7 @@ def atualizar_dashboard_total(usuario, lucro_operacao_pct, valor_financeiro):
     if saldos:
         reg_saldo = next((s for s in saldos if s['usuario_id'] == uid), None)
         if reg_saldo:
-            novo_saldo = float(reg_saldo.get('saldo_demo', 0)) + valor_financeiro
+            novo_saldo = float(reg_saldo.get('saldo_demo') or 0.0) + valor_financeiro # Blindagem
             api_base44("PUT", ENDPOINTS["saldo"], {"saldo_demo": novo_saldo}, id_registro=reg_saldo['id'])
             print(f"💰 Saldo Atualizado! {'+' if valor_financeiro >= 0 else ''}{valor_financeiro:.4f} USDT ajustados.")
 
@@ -171,8 +178,11 @@ def recuperar_memoria_encravada():
                 symbol = op.get("par_moeda", "BTC/USDT")
                 mem_key = f"{uid}_{symbol}"
                 cat = op.get("categoria_ordem", "Demo")
-                preco_ent = float(op.get("preco_entrada") or 0)
-                if preco_ent == 0: continue
+                
+                # 🛡️ BLINDAGEM MATEMÁTICA: Se o valor for None (vazio), assume o número padrão em vez de travar
+                preco_ent = float(op.get("preco_entrada") or 0.0)
+                if preco_ent == 0.0: continue
+                
                 tipo = op.get("tipo_ordem", "Compra")
 
                 if cat == "Fantasma":
@@ -185,9 +195,10 @@ def recuperar_memoria_encravada():
                     })
                 else:
                     if mem_key not in operacoes_abertas:
+                        cap_alocado_seguro = float(op.get("capital_alocado") or 100.0) # Proteção principal
                         operacoes_abertas[mem_key] = {
                             "id": op['id'], "entrada": preco_ent, "lucro_maximo": 0.0, 
-                            "trailing_ativo": False, "capital_alocado": float(op.get("capital_alocado", 100.0)), "tipo_ordem": tipo,
+                            "trailing_ativo": False, "capital_alocado": cap_alocado_seguro, "tipo_ordem": tipo,
                             "hora_criacao": time.time() 
                         }
         print("✅ Memória restaurada com sucesso!")
@@ -196,7 +207,7 @@ def recuperar_memoria_encravada():
 # 3. O CÉREBRO: IA + RADAR MULTIPAR
 # ==========================================
 def reuniao_com_ia_gestora(usuario, symbol, preco_atual, rsi_atual, volatilidade, marcha, raio_x_book, tendencia_macro, taxa_funding, indice_medo, radar_baleias):
-    global timestamps_ia
+    global timestamps_ia, teses_ia
     id_banco = usuario.get("id") 
     mem_key = f"{usuario.get('usuario_id')}_{symbol}"
     
@@ -215,22 +226,30 @@ def reuniao_com_ia_gestora(usuario, symbol, preco_atual, rsi_atual, volatilidade
       "rsi_alvo": 35, 
       "gatilho_trailing": 0.4, 
       "distancia_trailing": 0.2, 
-      "status_mercado": "[{symbol}] 🟢 Status...",
-      "observacao_ia": "Tese..."
+      "observacao_ia": "Sua tese curta e direta..."
     }}
     """
     try:
         res = cliente_ia.models.generate_content(model=MODELO_GEMINI, contents=prompt)
         nova_regra = json.loads(res.text.replace("```json", "").replace("```", "").strip())
         
+        # 1. Guarda a hora exata
         hora_reuniao = obter_data_hora_br().strftime('%H:%M:%S')
         timestamps_ia[symbol] = hora_reuniao
         
-        rodape = f"\n\n⏱️ Últimas atualizações: BTC [{timestamps_ia.get('BTC/USDT')}] | ETH [{timestamps_ia.get('ETH/USDT')}] | SOL [{timestamps_ia.get('SOL/USDT')}]"
-        nova_regra["observacao_ia"] = str(nova_regra.get("observacao_ia", "")) + rodape
+        # 2. Guarda a tese desta moeda específica
+        teses_ia[symbol] = nova_regra.get("observacao_ia", "Tese atualizada.")
         
+        # 3. Compila o Super Relatório Triplo
+        relatorio_master = f"🔹 [BTC/USDT] {timestamps_ia['BTC/USDT']}:\n{teses_ia['BTC/USDT']}\n\n"
+        relatorio_master += f"🔹 [ETH/USDT] {timestamps_ia['ETH/USDT']}:\n{teses_ia['ETH/USDT']}\n\n"
+        relatorio_master += f"🔹 [SOL/USDT] {timestamps_ia['SOL/USDT']}:\n{teses_ia['SOL/USDT']}"
+        
+        # Envia o relatório fundido para a Base44
+        nova_regra["observacao_ia"] = relatorio_master
         nova_regra["rsi_alvo_compra"] = nova_regra["rsi_alvo"] 
         api_base44("PUT", ENDPOINTS["controle"], nova_regra, id_registro=id_banco)
+        
         historico_hora[mem_key] = {"reais_vitorias": 0, "reais_derrotas": 0, "fantasma_vitorias": 0, "fantasma_derrotas": 0}
         print(f"✅ [NOVA DIRETRIZ {symbol}] Direção: {nova_regra['direcao_operacao']} | Alvo: {nova_regra['rsi_alvo']}")
     except Exception as e:
@@ -243,8 +262,8 @@ def reuniao_com_ia_gestora(usuario, symbol, preco_atual, rsi_atual, volatilidade
 # 4. O OPERÁRIO: LOOP TURBO COM TIME-DECAY E FDS
 # ==========================================
 def iniciar_loop():
-    print("🚀 MIRAQUANTIA SCALPER - MOTIVO DE FECHAMENTO ATIVADO")
-    global ultima_reuniao_ia, ordens_fantasma, historico_hora, operacoes_abertas, data_operacao_usuario, timestamps_ia
+    print("🚀 MIRAQUANTIA SCALPER - SUPER RELATÓRIO TRIPLO E BLINDAGEM DE ERROS ATIVOS")
+    global ultima_reuniao_ia, ordens_fantasma, historico_hora, operacoes_abertas, data_operacao_usuario, timestamps_ia, teses_ia
     
     indice_medo = obter_medo_e_ganancia()
     ultimo_update_medo = time.time()
@@ -311,7 +330,7 @@ def iniciar_loop():
                     continue
 
                 reg_saldo = next((s for s in saldos if s['usuario_id'] == uid), None) if saldos else None
-                saldo_total = float(reg_saldo.get('saldo_demo', 100)) if reg_saldo else 100.0
+                saldo_total = float(reg_saldo.get('saldo_demo') or 100.0)
                 capital_preso = sum(op["capital_alocado"] for k, op in operacoes_abertas.items() if k.startswith(f"{uid}_"))
                 saldo_livre = saldo_total - capital_preso
                 
@@ -337,8 +356,8 @@ def iniciar_loop():
                             print(f"   🧑‍💻 [{symbol}] INTERVENÇÃO HUMANA DETETADA! Fechada pelo Dashboard.")
                             ordem_db = next((x for x in todas_ops_db if x['id'] == op['id']), None)
                             if ordem_db:
-                                lucro_pct_final = float(ordem_db.get("lucro_porcentagem", 0))
-                                lucro_fin_final = float(ordem_db.get("lucro_financeiro", 0))
+                                lucro_pct_final = float(ordem_db.get("lucro_porcentagem") or 0.0)
+                                lucro_fin_final = float(ordem_db.get("lucro_financeiro") or 0.0)
                                 atualizar_dashboard_total(user, lucro_pct_final, lucro_fin_final)
                                 if lucro_pct_final > 0: historico_hora[mem_key]['reais_vitorias'] += 1
                                 else: historico_hora[mem_key]['reais_derrotas'] += 1
@@ -398,7 +417,6 @@ def iniciar_loop():
                             atualizar_dashboard_total(user, lucro_pct, lucro_fin)
                             del operacoes_abertas[mem_key]
 
-                    # PROCURA ENTRADA
                     else:
                         direcao = user.get("direcao_operacao", "Compra")
                         limite_rsi = float(user.get("rsi_alvo", 40))
@@ -407,7 +425,7 @@ def iniciar_loop():
                             res = api_base44("POST", ENDPOINTS["operacao"], {"usuario_id": uid, "par_moeda": symbol, "tipo_ordem": direcao, "categoria_ordem": modo, "preco_entrada": preco, "data_hora": data_hora_br, "status": "Aberta"})
                             if res and 'id' in res: operacoes_abertas[mem_key] = {"id": res['id'], "entrada": preco, "lucro_maximo": 0.0, "trailing_ativo": False, "capital_alocado": capital_op, "tipo_ordem": direcao, "hora_criacao": time.time()}
 
-                    # ORDEM FANTASMA - PROCESSO DE ENCERRAMENTO
+                    # ORDEM FANTASMA
                     for f in ordens_fantasma[mem_key][:]:
                         bateu_alvo = (f["tipo_ordem"] == "Compra" and preco >= f["alvo"]) or (f["tipo_ordem"] == "Venda" and preco <= f["alvo"])
                         bateu_stop = (f["tipo_ordem"] == "Compra" and preco <= f["stop"]) or (f["tipo_ordem"] == "Venda" and preco >= f["stop"])
