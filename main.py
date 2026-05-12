@@ -54,7 +54,6 @@ def api_base44(metodo, endpoint, dados=None, id_registro=None):
     headers = {"Content-Type": "application/json", "api_key": BASE44_API_KEY}
     url = f"{endpoint}/{id_registro}" if id_registro else endpoint
     try:
-        # Aumentado o timeout para 15s para suportar lentidões do servidor
         if metodo == "GET": res = requests.get(url, headers=headers, timeout=15)
         elif metodo == "POST": res = requests.post(url, json=dados, headers=headers, timeout=15)
         elif metodo == "PUT": res = requests.put(url, json=dados, headers=headers, timeout=15)
@@ -188,12 +187,11 @@ def auditoria_saida_ia(symbol, preco_atual, rsi_atual, lucro_atual, tendencia_ma
 # 4. O OPERÁRIO: LOOP COM MAXIMIZADOR E ALAVANCAGEM
 # ==========================================
 def iniciar_loop():
-    print("🚀 MIRAQUANTIA SCALPER - BLINDAGEM DE REDE (TUDO OU NADA)")
+    print("🚀 MIRAQUANTIA SCALPER - MODO TOLERÂNCIA ZERO (-0.10%) E ALAVANCAGEM DE RECUPERAÇÃO")
     global ultima_reuniao_ia, operacoes_abertas, data_operacao_usuario, cooldown_moedas, consecutivas_perdas
     
     while True:
         try:
-            # 🛡️ REGRA TUDO OU NADA: Exige que os 3 dados cheguem da Base44
             configs = api_base44("GET", ENDPOINTS["controle"])
             saldos = api_base44("GET", ENDPOINTS["saldo"]) 
             todas_ops_db = api_base44("GET", ENDPOINTS["operacao"])
@@ -278,9 +276,11 @@ def iniciar_loop():
                             
                             if op.get("trailing_ativo") and lucro_pct <= (op["lucro_maximo"] - distancia_ts): vender = True; motivo = "Trailing Stop Executado"
                             
-                            elif lucro_pct <= -10.0: 
-                                vender = True; motivo = "Stop Loss Drástico (-10%)"
-                                cooldown_moedas[mem_key] = time.time() + 1200 
+                            # 🛡️ NOVO STOP LOSS SUPER CURTO DE -0.10%
+                            elif lucro_pct <= -0.10: 
+                                vender = True; motivo = "Stop Loss Curto (-0.10%)"
+                                # Com stop curto, reduzimos o cooldown para ele poder tentar de novo mais rápido
+                                cooldown_moedas[mem_key] = time.time() + 300 
 
                         if vender:
                             if lucro_pct > 0:
