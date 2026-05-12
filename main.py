@@ -33,7 +33,7 @@ historico_hora = {}
 ultima_reuniao_ia = {}
 data_operacao_usuario = {}
 cooldown_moedas = {} 
-consecutivas_perdas = {} # 🛡️ RASTREADOR DE DERROTAS PARA ALAVANCAGEM
+consecutivas_perdas = {} 
 timestamps_ia = {'BTC/USDT': '--:--:--', 'ETH/USDT': '--:--:--', 'SOL/USDT': '--:--:--'}
 
 # ==========================================
@@ -54,13 +54,15 @@ def api_base44(metodo, endpoint, dados=None, id_registro=None):
     headers = {"Content-Type": "application/json", "api_key": BASE44_API_KEY}
     url = f"{endpoint}/{id_registro}" if id_registro else endpoint
     try:
-        if metodo == "GET": res = requests.get(url, headers=headers, timeout=10)
-        elif metodo == "POST": res = requests.post(url, json=dados, headers=headers, timeout=10)
-        elif metodo == "PUT": res = requests.put(url, json=dados, headers=headers, timeout=10)
+        # Aumentado o timeout para 15s para suportar lentidões do servidor
+        if metodo == "GET": res = requests.get(url, headers=headers, timeout=15)
+        elif metodo == "POST": res = requests.post(url, json=dados, headers=headers, timeout=15)
+        elif metodo == "PUT": res = requests.put(url, json=dados, headers=headers, timeout=15)
+        
         if res.status_code in [200, 201, 204]: return res.json() if res.text else True
         return None
     except Exception as e:
-        print(f"⚠️ Erro Base44: {e}")
+        print(f"⚠️ Aviso de Rede Base44 ({metodo}): {e}")
         return None
 
 def ler_mercado(exchange, symbol):
@@ -186,15 +188,20 @@ def auditoria_saida_ia(symbol, preco_atual, rsi_atual, lucro_atual, tendencia_ma
 # 4. O OPERÁRIO: LOOP COM MAXIMIZADOR E ALAVANCAGEM
 # ==========================================
 def iniciar_loop():
-    print("🚀 MIRAQUANTIA SCALPER - MODO STOP LARGO (-10%) E ALAVANCAGEM DE RECUPERAÇÃO")
+    print("🚀 MIRAQUANTIA SCALPER - BLINDAGEM DE REDE (TUDO OU NADA)")
     global ultima_reuniao_ia, operacoes_abertas, data_operacao_usuario, cooldown_moedas, consecutivas_perdas
     
     while True:
         try:
+            # 🛡️ REGRA TUDO OU NADA: Exige que os 3 dados cheguem da Base44
             configs = api_base44("GET", ENDPOINTS["controle"])
             saldos = api_base44("GET", ENDPOINTS["saldo"]) 
             todas_ops_db = api_base44("GET", ENDPOINTS["operacao"])
-            if not configs: time.sleep(10); continue
+            
+            if configs is None or saldos is None or todas_ops_db is None: 
+                print("⏳ Aguardando pacote completo de dados da Base44...")
+                time.sleep(10)
+                continue
 
             ops_fechadas_db = [op['id'] for op in todas_ops_db if op.get("status") == "Fechada"] if todas_ops_db else []
             ex = ccxt.bybit()
@@ -215,8 +222,8 @@ def iniciar_loop():
                 lucro_hoje = float(user.get("lucro_hoje_porcentagem") or 0.0)
                 if lucro_hoje >= float(user.get("meta_diaria_porcentagem") or 2.0): continue
 
-                reg_saldo = next((s for s in saldos if s['usuario_id'] == uid), None) if saldos else None
-                saldo_total = float(reg_saldo.get('saldo_demo') or 100.0)
+                reg_saldo = next((s for s in saldos if s['usuario_id'] == uid), None)
+                saldo_total = float(reg_saldo.get('saldo_demo') or 100.0) if reg_saldo else 100.0
                 capital_preso = sum(op["capital_alocado"] for k, op in operacoes_abertas.items() if k.startswith(f"{uid}_"))
                 saldo_livre = saldo_total - capital_preso
                 
@@ -234,11 +241,9 @@ def iniciar_loop():
                     if mem_key in cooldown_moedas:
                         if time.time() < cooldown_moedas[mem_key]: continue
 
-                    # GESTÃO DE ORDENS ABERTAS
                     if mem_key in operacoes_abertas:
                         op = operacoes_abertas[mem_key]
                         if op["id"] in ops_fechadas_db:
-                            # Intervenção Manual: assume lucro/perda e apaga
                             ordem_db = next((x for x in todas_ops_db if x['id'] == op['id']), None)
                             if ordem_db:
                                 pct_final = float(ordem_db.get("lucro_porcentagem") or 0.0)
@@ -273,13 +278,11 @@ def iniciar_loop():
                             
                             if op.get("trailing_ativo") and lucro_pct <= (op["lucro_maximo"] - distancia_ts): vender = True; motivo = "Trailing Stop Executado"
                             
-                            # 🛡️ NOVO STOP LOSS DRÁSTICO DE -10%
                             elif lucro_pct <= -10.0: 
                                 vender = True; motivo = "Stop Loss Drástico (-10%)"
                                 cooldown_moedas[mem_key] = time.time() + 1200 
 
                         if vender:
-                            # 🛡️ ATUALIZA O RASTREADOR DE DERROTAS
                             if lucro_pct > 0:
                                 consecutivas_perdas[mem_key] = 0
                             else:
@@ -289,17 +292,14 @@ def iniciar_loop():
                             atualizar_dashboard_total(user, lucro_pct, op["capital_alocado"] * (lucro_pct / 100))
                             del operacoes_abertas[mem_key]
 
-                    # ENTRADA SNIPER & MODO RECUPERAÇÃO
                     else:
                         direcao = user.get("direcao_operacao", "Compra")
                         
-                        # 🛡️ LÓGICA DO MODO RECUPERAÇÃO (ALAVANCAGEM)
                         em_recuperacao = consecutivas_perdas[mem_key] >= 3
                         
                         rsi_compra_alvo = 25 if em_recuperacao else 30
                         rsi_venda_alvo = 75 if em_recuperacao else 70
                         
-                        # Se estiver em recuperação, dobra o capital (limitado ao saldo livre)
                         capital_final = min(capital_op * 2.0, saldo_livre) if em_recuperacao else capital_op
 
                         pode_comprar = (tendencia_macro == "ALTA" and 15 < rsi < rsi_compra_alvo)
@@ -307,7 +307,7 @@ def iniciar_loop():
 
                         if (direcao == "Compra" and pode_comprar) or (direcao == "Venda" and pode_vender):
                             if em_recuperacao:
-                                print(f"   ⚠️ [{symbol}] MODO ALAVANCAGEM ATIVADO! Entrada cirúrgica para recuperar perdas. Capital: ${capital_final:.2f}")
+                                print(f"   ⚠️ [{symbol}] MODO ALAVANCAGEM ATIVADO! Capital: ${capital_final:.2f}")
                                 
                             res = api_base44("POST", ENDPOINTS["operacao"], {"usuario_id": uid, "par_moeda": symbol, "tipo_ordem": direcao, "categoria_ordem": modo, "preco_entrada": preco, "data_hora": agora_br.isoformat(), "status": "Aberta", "capital_alocado": capital_final})
                             if res and 'id' in res: 
